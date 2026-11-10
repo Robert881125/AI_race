@@ -11,6 +11,7 @@ import * as voice from './voice.js';
 import * as detector from './detector.js';
 import { renderDemoScene, DEMO_SIZE } from './demo.js';
 import { initRoutePanel, initAdminPanel } from './panels.js';
+import { createSidewalkScanner } from './scan.js';
 
 const $ = (s) => document.querySelector(s);
 const view = $('#view');
@@ -18,6 +19,9 @@ const vctx = view.getContext('2d');
 const bird = $('#bird');
 const bctx = bird.getContext('2d');
 const video = $('#video');
+const scanner = createSidewalkScanner({
+  status: $('#scan-status'), preview: $('#scan-preview'), button: $('#scan-again'),
+});
 
 const state = {
   config: null,
@@ -82,6 +86,7 @@ function updateThreshold() {
 function setSource(src) {
   if (state.dialog) closeDialog();
   state.source = src;
+  scanner.setSource(src);
   view.width = src.width;
   view.height = src.height;
   clearAnnotations(false);
@@ -670,6 +675,7 @@ let lastDetRun = 0;
 function loop(now) {
   const s = state.source;
   if (s) {
+    if (!document.hidden) void scanner.tick(now);
     const dyn = isDynamic();
     if (s.kind === 'video') {
       $('#time').textContent = `${video.currentTime.toFixed(1)} / ${(video.duration || 0).toFixed(1)} 秒`;

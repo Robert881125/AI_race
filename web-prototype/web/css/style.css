@@ -82,6 +82,11 @@ body {
 .tabs button[aria-selected="true"] { color: var(--text); border-bottom-color: var(--accent); font-weight: 600; }
 
 main { max-width: 760px; margin: 0 auto; padding: 16px; }
+.scan-panel { margin: 14px 0; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.scan-heading { justify-content: space-between; align-items: center; }
+.scan-panel p { margin: 8px 0; }
+#scan-preview { display: block; width: 100%; max-height: 320px; object-fit: contain; background: #111; border-radius: 8px; }
+#scan-preview[hidden] { display: none; }
 section > * + * { margin-top: 12px; }
 
 .row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
