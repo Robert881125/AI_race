@@ -8,7 +8,7 @@ import {
 import { classifyConsent } from './intent.js';
 import * as api from './api.js?v=map-1';
 import * as voice from './voice.js';
-import * as detector from './detector.js';
+import * as detector from './detector.js?v=responsive-1';
 import { renderDemoScene, DEMO_SIZE } from './demo.js';
 import { initRoutePanel, initAdminPanel } from './panels.js?v=map-1';
 import { createMap } from './map.js?v=map-1';
@@ -53,6 +53,9 @@ const state = {
   detections: [],
   detAt: 0,
   detBusy: false,
+  detReady: false,
+  detRequest: 0,
+  detCost: 0,
   grid: null,
   result: null,
   history: [],
@@ -696,14 +699,30 @@ $('#discard-report').addEventListener('click', () => {
 
 // ───────── 自動偵測 ─────────
 $('#auto-on').addEventListener('change', async (e) => {
-  if (!e.target.checked) { state.detections = []; $('#auto-status').textContent = ''; markDirty(); return; }
-  $('#auto-status').textContent = '載入模型中（第一次需要網路，約數秒）…';
+  const toggle = e.target;
+  const request = ++state.detRequest;
+  const status = $('#auto-status');
+  state.detReady = false;
+  state.detections = [];
+  markDirty();
+  if (!toggle.checked) { status.textContent = ''; return; }
+  status.textContent = '檢查圖形加速並載入物件模型…';
   try {
+    const accelerated = await detector.hasAcceleration();
+    if (request !== state.detRequest) return;
+    if (!accelerated) {
+      toggle.checked = false;
+      status.textContent = '這個瀏覽器目前無法使用圖形加速，已關閉「顯示物件框」。人行道掃描可繼續使用。';
+      return;
+    }
     await detector.load();
-    $('#auto-status').textContent = '自動偵測已開啟：偵測框內保留未知。';
-  } catch (err) {
-    $('#auto-status').textContent = `模型載入失敗：${err.message}`;
-    e.target.checked = false;
+    if (request !== state.detRequest) return;
+    state.detReady = true;
+    status.textContent = '物件框已開啟。偵測框是模型推估。';
+  } catch (error) {
+    if (request !== state.detRequest) return;
+    status.textContent = '模型載入失敗：' + error.message;
+    toggle.checked = false;
   }
   markDirty();
 });
@@ -711,8 +730,26 @@ $('#auto-on').addEventListener('change', async (e) => {
 const detectorCanvas = document.createElement('canvas');
 const detectorContext = detectorCanvas.getContext('2d');
 
+/**
+ * 「顯示物件框」在沒有 GPU 加速的電腦上會整段卡住頁面（實測最長 5 秒，按鈕全都沒反應）。
+ * 記錄每次耗時，下一次至少隔 4 倍時間；一次超過 0.7 秒就自動關閉並說明，其他功能照常。
+ */
+const SLOW_DETECT_MS = 700;
+function noteDetectionCost(ms) {
+  state.detCost = ms;
+  if (ms <= SLOW_DETECT_MS) return false;
+  $('#auto-on').checked = false;
+  state.detReady = false;
+  state.detections = [];
+  $('#auto-status').textContent =
+    `這台裝置跑「顯示物件框」太慢（每次約 ${(ms / 1000).toFixed(1)} 秒，會讓畫面卡住、按鈕沒反應），已自動關閉。其他功能不受影響。`;
+  markDirty();
+  return true;
+}
+
 async function runDetection() {
-  if (state.detBusy || !state.source || !$('#auto-on').checked) return;
+  if (state.detBusy || !state.source || !state.detReady) return;
+  const request = state.detRequest;
   const source = state.source;
   const moving = source.kind === 'video' || source.kind === 'live';
   const calibration = state.calib;
@@ -722,7 +759,9 @@ async function runDetection() {
   state.detBusy = true;
   try {
     if (region) drawScanRegion(detectorCanvas, detectorContext, source.el, region);
-    const detections = await detector.detect(region ? detectorCanvas : source.el);
+    const started = performance.now();
+    const detections = await detector.detect(region ? detectorCanvas : source.el, 0.45, { maxSide: 320 });
+    if (request !== state.detRequest || noteDetectionCost(performance.now() - started)) return;
     if (source === state.source && calibration === state.calib && $('#auto-on').checked &&
         (source.kind !== 'video' || (!video.seeking && Math.abs(video.currentTime - videoTime) < 0.5))) {
       state.detections = region ? detections.map((detection) => {
@@ -880,8 +919,8 @@ function loop(now) {
         }
       }
     }
-    const detectionInterval = s.kind === 'video' || s.kind === 'live' ? 1200 : 400;
-    if ($('#auto-on').checked && now - lastDetRun > detectionInterval && (dyn || state.dirty)) {
+    const detectionInterval = Math.max(s.kind === 'video' || s.kind === 'live' ? 1200 : 400, 4 * (state.detCost || 0));
+    if (state.detReady && now - lastDetRun > detectionInterval && (dyn || state.dirty)) {
       lastDetRun = now;
       runDetection();
     }

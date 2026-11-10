@@ -30,6 +30,7 @@ const CLASS_MAP = {
 
 let model = null;
 let loading = null;
+let tfReady = null;
 
 function loadScript(src) {
   return new Promise((resolve, reject) => {
@@ -38,17 +39,33 @@ function loadScript(src) {
     s.src = src;
     s.crossOrigin = 'anonymous';
     s.onload = resolve;
-    s.onerror = () => reject(new Error('無法載入 ' + src));
+    s.onerror = () => {
+      s.remove();
+      reject(new Error('無法載入 ' + src));
+    };
     document.head.appendChild(s);
   });
+}
+
+function loadTensorflow() {
+  tfReady ??= (async () => {
+    if (!window.tf) await loadScript(TFJS);
+    await window.tf.ready();
+  })().catch((error) => { tfReady = null; throw error; });
+  return tfReady;
+}
+
+export async function hasAcceleration() {
+  await loadTensorflow();
+  return ['webgl', 'webgpu'].includes(window.tf.getBackend());
 }
 
 export function load() {
   if (model) return Promise.resolve(model);
   if (!loading) {
     loading = (async () => {
-      await loadScript(TFJS);
-      await loadScript(COCO);
+      await loadTensorflow();
+      if (!window.cocoSsd) await loadScript(COCO);
       model = await window.cocoSsd.load({ base: 'lite_mobilenet_v2' });
       return model;
     })().catch((e) => { loading = null; throw e; });
@@ -56,11 +73,28 @@ export function load() {
   return loading;
 }
 
-export async function detect(el) {
+/**
+ * maxSide（可省略）：先把畫面縮到長邊 maxSide 像素再偵測，框再換算回原尺寸。
+ * 模型內部本來就只用約 300 像素；沒有 GPU 加速的電腦上，大畫面會讓整個頁面卡住好幾秒。
+ */
+const small = typeof document !== 'undefined' ? document.createElement('canvas') : null;
+export async function detect(el, minScore = 0.45, { maxSide = null } = {}) {
   const m = await load();
-  const preds = await m.detect(el, 20, 0.45);
+  const w = el.videoWidth || el.naturalWidth || el.width;
+  const h = el.videoHeight || el.naturalHeight || el.height;
+  let input = el;
+  let k = 1;
+  if (maxSide && small && Math.max(w, h) > maxSide) {
+    k = maxSide / Math.max(w, h);
+    small.width = Math.max(1, Math.round(w * k));
+    small.height = Math.max(1, Math.round(h * k));
+    small.getContext('2d').drawImage(el, 0, 0, small.width, small.height);
+    input = small;
+  }
+  const preds = await m.detect(input, 20, minScore);
   return preds.map((p) => {
     const [label, category, isObstacle] = CLASS_MAP[p.class] || ['物品', 'other', false];
-    return { bbox: p.bbox, cls: p.class, score: p.score, label, category, isObstacle };
+    const bbox = k === 1 ? p.bbox : p.bbox.map((v) => v / k);
+    return { bbox, cls: p.class, score: p.score, label, category, isObstacle };
   });
 }

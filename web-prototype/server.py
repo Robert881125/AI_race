@@ -81,7 +81,33 @@ class Handler(SimpleHTTPRequestHandler):
         super().end_headers()
 
     # ── 工具 ──
+    def _drain_body(self) -> None:
+        """回覆前把還沒讀的請求內容讀掉（最多 4 MB）。沒讀完就回覆錯誤時，
+        Windows 會直接重設連線，瀏覽器只看到「Failed to fetch」而不是錯誤原因。"""
+        if getattr(self, "_body_done", False) or self.command not in ("POST", "PUT"):
+            return
+        self._body_done = True
+        try:
+            remaining = min(max(int(self.headers.get("Content-Length") or 0), 0), 4 * 1024 * 1024)
+        except ValueError:
+            return
+        if remaining == 0:
+            return
+        previous_timeout = self.connection.gettimeout()
+        try:
+            self.connection.settimeout(2)
+            while remaining > 0:
+                chunk = self.rfile.read(min(65536, remaining))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+        except OSError:
+            self.close_connection = True
+        finally:
+            self.connection.settimeout(previous_timeout)
+
     def _json(self, status: int, body) -> None:
+        self._drain_body()
         data = json.dumps(body, ensure_ascii=False).encode("utf-8")
         self.send_response(status)
         self.send_header("Content-Type", "application/json; charset=utf-8")
@@ -90,11 +116,16 @@ class Handler(SimpleHTTPRequestHandler):
         self.wfile.write(data)
 
     def _read_json(self):
-        length = int(self.headers.get("Content-Length") or 0)
+        try:
+            length = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            return None
         if length <= 0 or length > 64 * 1024:
             return None
         try:
-            return json.loads(self.rfile.read(length).decode("utf-8"))
+            raw = self.rfile.read(length)
+            self._body_done = True
+            return json.loads(raw.decode("utf-8"))
         except (ValueError, UnicodeDecodeError):
             return None
 
