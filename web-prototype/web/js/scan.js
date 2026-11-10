@@ -1,6 +1,5 @@
-const runtimeUrl = 'https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.8.1/dist/transformers.min.js';
-const modelId = 'Xenova/segformer-b0-finetuned-cityscapes-512-1024';
-const modelRevision = '18b12204d4c787afb8df24e49efc36a20d9f16d0';
+import { drawScanRegion, scanRegion } from './scan-region.js?v=video-1';
+
 const obstacleNames = new Map([
   ['person', '行人'], ['rider', '騎乘者'], ['bicycle', '自行車'], ['motorcycle', '機車'],
   ['car', '汽車'], ['truck', '貨車'], ['bus', '公車'],
@@ -49,7 +48,7 @@ function findPaintedLane(pixels, road) {
   return result ? { width, height, data: result } : null;
 }
 
-export function summarizeScan(segments, pixels) {
+export function summarizeScan(segments, pixels, nearOnly = false) {
   let sidewalk = segments.find(({ label }) => label === 'sidewalk')?.mask;
   const area = sidewalk?.data.reduce((count, pixel) => count + (pixel > 0), 0) ?? 0;
   const painted = !sidewalk || area < Math.max(4, sidewalk.width * sidewalk.height * 0.0025);
@@ -59,7 +58,7 @@ export function summarizeScan(segments, pixels) {
 
   const possibleObstacles = segments.filter(({ label, mask }) => {
     if (!obstacleNames.has(label) || mask.width !== width || mask.height !== height) return false;
-    const firstRow = Math.floor(height * 0.45);
+    const firstRow = nearOnly ? 0 : Math.floor(height * 0.45);
     const contactDepth = Math.max(1, Math.round(height * 0.025));
     let adjoiningColumns = 0;
     for (let x = 0; x < width; x++) {
@@ -79,69 +78,84 @@ export function summarizeScan(segments, pixels) {
   return { sidewalk, possibleObstacles, painted };
 }
 
-let loading;
-let modelReady = false;
-
-function loadModel() {
-  if (!loading) {
-    loading = (async () => {
-      const { env, pipeline, RawImage } = await import(runtimeUrl);
-      env.allowLocalModels = false;
-      env.backends.onnx.wasm.numThreads = 1;
-      const segment = await pipeline('image-segmentation', modelId, {
-        revision: modelRevision, device: 'wasm', dtype: 'q8',
-      });
-      modelReady = true;
-      return { segment, RawImage };
-    })().catch((error) => { loading = null; throw error; });
+export function createSidewalkScanner({ status, preview, button, getCalibration, captureEvidence, onResult, onFailure }) {
+  let worker = null;
+  let modelReady = false;
+  function segment(pixels) {
+    if (!worker) worker = new Worker(new URL('./scan-worker.js?v=video-1', import.meta.url), { type: 'module' });
+    return new Promise((resolve, reject) => {
+      worker.onmessage = ({ data }) => {
+        if (data.error) reject(new Error(data.error));
+        else resolve(data.labels);
+      };
+      worker.onerror = (event) => {
+        worker.terminate();
+        worker = null;
+        modelReady = false;
+        reject(new Error(event.message || '無法啟動背景掃描'));
+      };
+      worker.postMessage(pixels);
+    });
   }
-  return loading;
-}
-
-export function createSidewalkScanner({ status, preview, button, onResult, onFailure }) {
   let source = null;
   let busy = false;
   let failed = false;
   let nextScanAt = 0;
   let lastFrame = null;
+  let generation = 0;
+  let lastCalibration = null;
   const snapshot = document.createElement('canvas');
   const ctx = snapshot.getContext('2d', { willReadFrequently: true });
 
   function setSource(next) {
     source = next?.kind === 'demo' ? null : next;
+    lastCalibration = null;
+    reset();
+    button.disabled = !source;
+    if (!source) status.textContent = next
+      ? '目前為內建示範，通行結果使用預設標註。' : '選擇照片、影片或開啟鏡頭後會自動掃描。';
+  }
+
+  function reset() {
+    generation++;
     failed = false;
     nextScanAt = 0;
     lastFrame = null;
     preview.hidden = true;
-    button.disabled = !source;
-    status.textContent = source
-      ? '準備自動掃描人行道，首次使用需要下載模型。'
-      : next ? '目前為內建示範，通行結果使用預設標註。' : '選擇照片、影片或開啟鏡頭後會自動掃描。';
+    if (source) status.textContent = '準備掃描人行道，首次使用需要下載模型。';
   }
 
   async function tick(now) {
     const current = source;
-    if (!current || busy || failed || now < nextScanAt) return;
-    const video = current.kind !== 'image';
-    if (video && current.el.readyState < 2) return;
-    const frame = video ? current.el.currentTime : 0;
+    if (!current) return;
+    const isVideo = current.kind !== 'image';
+    const calibration = isVideo ? getCalibration?.() ?? null : null;
+    if (calibration !== lastCalibration) {
+      lastCalibration = calibration;
+      reset();
+    }
+    if (busy || failed || now < nextScanAt) return;
+    if (isVideo && (current.el.readyState < 2 || current.el.seeking)) return;
+    const frame = isVideo ? current.el.currentTime : 0;
     if (frame === lastFrame) return;
-    busy = true;
     lastFrame = frame;
+    const region = scanRegion(current, calibration);
+    if (!region) {
+      status.textContent = '校正範圍沒有落在前方 4 公尺內的可見路面，請重做地面校正。';
+      return;
+    }
+    busy = true;
     const capturedAt = performance.now();
+    const request = generation;
     try {
-      const scale = Math.min(1, 512 / Math.max(current.width, current.height));
-      snapshot.width = Math.max(1, Math.round(current.width * scale));
-      snapshot.height = Math.max(1, Math.round(current.height * scale));
-      ctx.drawImage(current.el, 0, 0, snapshot.width, snapshot.height);
+      drawScanRegion(snapshot, ctx, current.el, region);
       const pixels = ctx.getImageData(0, 0, snapshot.width, snapshot.height);
-      status.textContent = modelReady ? '正在掃描人行道…' : '正在下載及載入人行道模型…';
-      const { segment, RawImage } = await loadModel();
-      if (source !== current) return;
-      status.textContent = '正在掃描人行道…';
-      const labels = await segment(new RawImage(pixels.data, pixels.width, pixels.height, 4));
-      if (source !== current) return;
-      const { sidewalk, possibleObstacles, painted } = summarizeScan(labels, pixels);
+      const evidence = captureEvidence?.(current);
+      status.textContent = modelReady ? '正在掃描人行道…' : '正在載入模型並掃描人行道…';
+      const labels = await segment(pixels);
+      modelReady = true;
+      if (request !== generation || (isVideo && current.el.seeking)) return;
+      const { sidewalk, possibleObstacles, painted } = summarizeScan(labels, pixels, isVideo);
       preview.width = snapshot.width;
       preview.height = snapshot.height;
       const output = preview.getContext('2d');
@@ -165,10 +179,13 @@ export function createSidewalkScanner({ status, preview, button, onResult, onFai
       const obstacles = possibleObstacles.length ? `疑似靠近人行道的物體：${possibleObstacles.join('、')}。` : '';
       const time = current.kind === 'video' ? `影片 ${frame.toFixed(1)} 秒。\n` : '';
       const widthHint = current.kind === 'live' ? '' : ' 通行淨寬待確認。';
-      status.textContent = `掃描完成。${time}${scene}${obstacles}${widthHint}`;
-      onResult?.({ labels, sidewalk, painted, capturedAt, snapshot, source: current });
+      const scope = !isVideo ? '' : region.endCm === null
+        ? '範圍：畫面近端（尚未校正距離）。'
+        : '範圍：校正區內，最遠前方 ' + (region.endCm / 100).toFixed(1) + ' 公尺。';
+      status.textContent = `掃描完成。${time}${scope}${scene}${obstacles}${widthHint}`;
+      onResult?.({ labels, sidewalk, painted, capturedAt, region, snapshot: evidence ?? snapshot, source: current });
     } catch (error) {
-      if (source !== current) return;
+      if (request !== generation) return;
       failed = true;
       preview.hidden = true;
       status.textContent = '人行道掃描失敗。請檢查網路及瀏覽器，再按「重新掃描」。';
@@ -176,15 +193,13 @@ export function createSidewalkScanner({ status, preview, button, onResult, onFai
       onFailure?.(current);
     } finally {
       busy = false;
-      if (source === current) nextScanAt = performance.now() + 1500;
+      if (request === generation) nextScanAt = performance.now() + 1500;
     }
   }
 
   button.addEventListener('click', () => {
-    failed = false;
-    nextScanAt = 0;
-    lastFrame = null;
+    reset();
     void tick(performance.now());
   });
-  return { setSource, tick };
+  return { setSource, reset, tick };
 }

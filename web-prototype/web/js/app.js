@@ -12,8 +12,10 @@ import * as detector from './detector.js';
 import { renderDemoScene, DEMO_SIZE } from './demo.js';
 import { initRoutePanel, initAdminPanel } from './panels.js?v=map-1';
 import { createMap } from './map.js?v=map-1';
-import { createSidewalkScanner } from './scan.js?v=live-width-1';
-import { assessLiveScan, updateLiveReport } from './live-scan.js?v=review-1';
+import { createSidewalkScanner } from './scan.js?v=video-1';
+import { bindVideoControls } from './video-controls.js?v=video-1';
+import { NEAR_LIMIT_CM, drawScanRegion, scanRegion } from './scan-region.js?v=video-1';
+import { assessLiveScan, updateLiveReport } from './live-scan.js?v=video-1';
 
 const $ = (s) => document.querySelector(s);
 const view = $('#view');
@@ -23,6 +25,7 @@ const bctx = bird.getContext('2d');
 const video = $('#video');
 const scanner = createSidewalkScanner({
   status: $('#scan-status'), preview: $('#scan-preview'), button: $('#scan-again'),
+  getCalibration: () => state.calib,
   onResult: handleLiveScan,
   onFailure: (source) => { if (source.kind === 'live') resetLiveAssessment('LIVE_SCAN_FAILED'); },
 });
@@ -68,12 +71,13 @@ function params() {
   const rect = { widthCm: num('#p-rect-w', 120), lengthCm: num('#p-rect-l', 200), nearCm: num('#p-near', 50) };
   const profile = state.config?.profiles.find((p) => p.id === $('#profile').value) || { widthCm: 70, sideMarginCm: 10 };
   const live = state.source?.kind === 'live';
+  const limit = live || state.source?.kind === 'video' ? NEAR_LIMIT_CM : Infinity;
   const widthCm = live ? 70 : num('#p-width', profile.widthCm);
   const sideCm = live ? 10 : num('#p-side', profile.sideMarginCm);
   return {
     rect,
     corridor: { leftCm: -rect.widthCm / 2 - num('#p-edge-l', 0), rightCm: rect.widthCm / 2 + num('#p-edge-r', 0) },
-    range: { startCm: rect.nearCm, endCm: num('#p-range', rect.nearCm + rect.lengthCm) },
+    range: { startCm: rect.nearCm, endCm: Math.min(limit, num('#p-range', rect.nearCm + rect.lengthCm)) },
     startXCm: num('#p-start-x', 0),
     cellCm: Math.max(2, num('#p-cell', 5)),
     marginCm: Math.max(0, num('#p-margin', 5)),
@@ -95,8 +99,11 @@ function setSource(src) {
   if (state.dialog) closeDialog();
   state.source = src;
   scanner.setSource(src);
-  view.width = src.width;
-  view.height = src.height;
+  const scale = src.kind === 'video' || src.kind === 'live'
+    ? Math.min(1, 960 / Math.max(src.width, src.height)) : 1;
+  view.width = Math.max(1, Math.round(src.width * scale));
+  view.height = Math.max(1, Math.round(src.height * scale));
+  vctx.setTransform(view.width / src.width, 0, 0, view.height / src.height, 0, 0);
   clearAnnotations(false);
   state.detections = [];
   state.history = [];
@@ -104,6 +111,7 @@ function setSource(src) {
   state.lastAlertAt = 0;
   $('#stage-hint').hidden = true;
   $('#video-controls').hidden = src.kind !== 'video';
+  if (src.kind === 'video') videoControls.reset();
   state.calibPts = [];
   state.calib = null;
   const live = src.kind === 'live';
@@ -187,11 +195,16 @@ $('#demo').addEventListener('change', (e) => {
 });
 
 // 影片控制
-$('#play').addEventListener('click', () => (video.paused ? video.play() : video.pause()));
-$('#back').addEventListener('click', () => { video.pause(); video.currentTime = Math.max(0, video.currentTime - 0.5); });
-$('#fwd').addEventListener('click', () => { video.pause(); video.currentTime = Math.min(video.duration || 0, video.currentTime + 0.5); });
-video.addEventListener('play', () => { $('#play').textContent = '暫停'; dropStaleAnnotations(); });
-video.addEventListener('pause', () => { $('#play').textContent = '播放'; markDirty(); });
+const videoControls = bindVideoControls(video, $('#video-controls'), () => {
+  scanner.reset();
+  state.detections = [];
+  state.history = [];
+  state.stable = null;
+  if (state.dialog) closeDialog();
+  markDirty();
+});
+video.addEventListener('play', dropStaleAnnotations);
+video.addEventListener('pause', markDirty);
 video.addEventListener('seeked', () => { dropStaleAnnotations(); markDirty(); });
 
 /** 標註只適用於標註當下的畫面（討論04：輸出描述當前影格） */
@@ -291,7 +304,8 @@ function closeDraft() {
 view.addEventListener('pointerdown', (e) => {
   if (!state.source || state.mode === 'view') return;
   const r = view.getBoundingClientRect();
-  const pt = [((e.clientX - r.left) / r.width) * view.width, ((e.clientY - r.top) / r.height) * view.height];
+  const pt = [((e.clientX - r.left) / r.width) * state.source.width,
+    ((e.clientY - r.top) / r.height) * state.source.height];
   if (state.mode === 'calib') {
     if (state.calibPts.length >= 4) state.calibPts = [];
     state.calibPts.push(pt);
@@ -307,7 +321,7 @@ view.addEventListener('pointerdown', (e) => {
     // 點回第一個點附近 → 自動完成
     if (state.draft.length >= 3) {
       const [fx, fy] = state.draft[0];
-      if (Math.hypot(fx - pt[0], fy - pt[1]) < view.width * 0.02) { closeDraft(); return; }
+      if (Math.hypot(fx - pt[0], fy - pt[1]) < state.source.width * 0.02) { closeDraft(); return; }
     }
     state.draft.push(pt);
   }
@@ -618,16 +632,32 @@ $('#auto-on').addEventListener('change', async (e) => {
   markDirty();
 });
 
+const detectorCanvas = document.createElement('canvas');
+const detectorContext = detectorCanvas.getContext('2d');
+
 async function runDetection() {
   if (state.detBusy || !state.source || !$('#auto-on').checked) return;
   const source = state.source;
+  const moving = source.kind === 'video' || source.kind === 'live';
+  const calibration = state.calib;
   const videoTime = video.currentTime;
+  const region = moving ? scanRegion(source, calibration) : null;
+  if (moving && (!region || video.seeking || video.readyState < 2)) return;
   state.detBusy = true;
   try {
-    const detections = await detector.detect(source.el);
-    if (source === state.source && $('#auto-on').checked &&
-        (source.kind !== 'video' || Math.abs(video.currentTime - videoTime) < 0.5)) {
-      state.detections = detections;
+    if (region) drawScanRegion(detectorCanvas, detectorContext, source.el, region);
+    const detections = await detector.detect(region ? detectorCanvas : source.el);
+    if (source === state.source && calibration === state.calib && $('#auto-on').checked &&
+        (source.kind !== 'video' || (!video.seeking && Math.abs(video.currentTime - videoTime) < 0.5))) {
+      state.detections = region ? detections.map((detection) => {
+        const [x, y, width, height] = detection.bbox;
+        const scaleX = region.width / detectorCanvas.width;
+        const scaleY = region.height / detectorCanvas.height;
+        return {
+          ...detection,
+          bbox: [region.x + x * scaleX, region.y + y * scaleY, width * scaleX, height * scaleY],
+        };
+      }) : detections;
       state.detAt = performance.now();
       markDirty();
     }
@@ -660,8 +690,8 @@ function drawLine(ctx, pts, color, width) {
 function drawView() {
   const s = state.source;
   if (!s) return;
-  const k = view.width / 960; // 線寬隨解析度縮放
-  try { vctx.drawImage(s.el, 0, 0, view.width, view.height); } catch { return; }
+  const k = s.width / 960; // 線寬隨解析度縮放
+  try { vctx.drawImage(s.el, 0, 0, s.width, s.height); } catch { return; }
   const p = params();
   const c = state.calib;
 
@@ -762,10 +792,10 @@ function loop(now) {
     if (!document.hidden) void scanner.tick(now);
     const dyn = isDynamic();
     if (s.kind === 'video') {
-      $('#time').textContent = `${video.currentTime.toFixed(1)} / ${(video.duration || 0).toFixed(1)} 秒`;
       if (video.currentTime !== lastVideoTime) { lastVideoTime = video.currentTime; dropStaleAnnotations(); markDirty(); }
     }
-    if ($('#auto-on').checked && now - lastDetRun > 400 && (dyn || state.dirty)) {
+    const detectionInterval = s.kind === 'video' || s.kind === 'live' ? 1200 : 400;
+    if ($('#auto-on').checked && now - lastDetRun > detectionInterval && (dyn || state.dirty)) {
       lastDetRun = now;
       runDetection();
     }

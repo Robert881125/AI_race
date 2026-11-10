@@ -1,5 +1,7 @@
 import { assess, buildGrid, FREE, BLOCKED, UNKNOWN } from './assess.js?v=review-1';
 
+import { nearScanRange } from './scan-region.js?v=video-1';
+
 const staticObstacles = new Map([
   ['bicycle', { label: '自行車', category: 'bicycle' }],
   ['motorcycle', { label: '機車', category: 'motorcycle' }],
@@ -8,17 +10,19 @@ const staticObstacles = new Map([
   ['bus', { label: '公車', category: 'other' }],
 ]);
 
-export function assessLiveScan({ labels, sidewalk, painted }, calib, options) {
-  if (!calib || !sidewalk || painted) {
+export function assessLiveScan({ labels, sidewalk, painted, region }, calib, options) {
+  const range = calib && nearScanRange(calib);
+  if (!range || !sidewalk || painted) {
     return {
       grid: null,
-      result: { ...assess(null, options), reason: calib ? 'NO_GROUND_EVIDENCE' : 'OUTSIDE_CALIBRATION' },
+      result: { ...assess(null, options), reason: range ? 'NO_GROUND_EVIDENCE' : 'OUTSIDE_CALIBRATION' },
       obstacle: null,
     };
   }
   const { width, height, data } = sidewalk;
   const { width: imageWidth, height: imageHeight } = calib.imageSize;
-  const { widthCm, nearCm, lengthCm } = calib.rect;
+  const { widthCm } = calib.rect;
+  const crop = region ?? { x: 0, y: 0, width: imageWidth, height: imageHeight };
   const obstacles = labels.filter(({ label, mask }) =>
     staticObstacles.has(label) && mask.width === width && mask.height === height);
   const contactDepth = Math.max(2, Math.round(height * 0.015));
@@ -26,12 +30,13 @@ export function assessLiveScan({ labels, sidewalk, painted }, calib, options) {
   const grid = buildGrid({
     calib,
     corridor: { leftCm: -widthCm / 2, rightCm: widthCm / 2 },
-    range: { startCm: nearCm, endCm: nearCm + lengthCm },
+    range,
     cellCm: options.cellCm,
     marginCm: options.marginCm,
     sampleImage([u, v]) {
-      const x = Math.floor(u / imageWidth * width);
-      const y = Math.floor(v / imageHeight * height);
+      const x = Math.floor((u - crop.x) / crop.width * width);
+      const y = Math.floor((v - crop.y) / crop.height * height);
+      if (x < 0 || y < 0 || x >= width || y >= height) return UNKNOWN;
       const index = y * width + x;
       if (data[index]) return FREE;
       if (x < 1 || x >= width - 1) return UNKNOWN;

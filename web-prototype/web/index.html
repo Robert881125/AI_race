@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>無礙智瞳 原型</title>
-  <link rel="stylesheet" href="css/style.css?v=map-1">
+  <link rel="stylesheet" href="css/style.css?v=video-1">
 </head>
 <body>
 <header class="top">
-  <div class="brand"><strong>無礙智瞳</strong><span class="ver">網頁原型 v0.3.0</span></div>
+  <div class="brand"><strong>無礙智瞳</strong><span class="ver">網頁原型 v0.3.1</span></div>
   <nav class="tabs" role="tablist" aria-label="功能">
     <button role="tab" id="tab-btn-camera" aria-controls="tab-camera" aria-selected="true">鏡頭判斷</button>
     <button role="tab" id="tab-btn-route" aria-controls="tab-route" aria-selected="false">路線提醒</button>
@@ -45,6 +45,7 @@
         <strong id="scan-heading">自動掃描人行道</strong>
         <button type="button" id="scan-again" disabled>重新掃描</button>
       </div>
+      <p class="muted small">影片和鏡頭只掃描近端路面。地面校正後，最遠掃到前方 4 公尺。</p>
       <p id="scan-status" role="status">選擇照片、影片或開啟鏡頭後會自動掃描。</p>
       <canvas id="scan-preview" aria-label="最近掃描的影格，綠色是辨識到的人行道，黃色是疑似人行標線" hidden></canvas>
       <div id="live-measure" hidden>
@@ -60,11 +61,33 @@
       <p id="stage-hint" class="stage-hint">請先選擇影片、照片、開啟鏡頭，或使用示範畫面</p>
     </div>
 
-    <div class="row" id="video-controls" hidden>
-      <button type="button" id="play">播放</button>
-      <button type="button" id="back">◀ 0.5 秒</button>
-      <button type="button" id="fwd">0.5 秒 ▶</button>
-      <span id="time" class="muted small"></span>
+    <div id="video-controls" hidden>
+      <label class="field">影片進度
+        <input id="video-timeline" type="range" min="0" max="0" step="any" value="0" aria-describedby="time">
+      </label>
+      <div class="row video-transport">
+        <button type="button" id="play">播放</button>
+        <label class="field inline">跳過時間
+          <select id="jump-amount">
+            <option value="0.5">0.5 秒</option>
+            <option value="1">1 秒</option>
+            <option value="5" selected>5 秒</option>
+            <option value="10">10 秒</option>
+            <option value="30">30 秒</option>
+            <option value="60">1 分鐘</option>
+          </select>
+        </label>
+        <button type="button" id="back">向後跳</button>
+        <button type="button" id="fwd">向前跳</button>
+        <span id="time" class="muted small"></span>
+      </div>
+      <form class="row video-transport" id="video-start-form">
+        <label class="field">從指定時間開始
+          <input type="text" id="video-start" placeholder="例如 85 或 1:25" autocomplete="off" aria-describedby="video-control-msg">
+        </label>
+        <button type="submit">從此播放</button>
+      </form>
+      <p id="video-control-msg" class="muted small" role="status"></p>
     </div>
 
     <div class="modes" role="group" aria-label="畫面操作模式">
@@ -183,6 +206,6 @@
 </footer>
 
 <video id="video" class="offscreen" playsinline muted></video>
-<script type="module" src="js/app.js?v=map-1"></script>
+<script type="module" src="js/app.js?v=video-1"></script>
 </body>
 </html>
