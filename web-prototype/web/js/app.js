@@ -12,10 +12,11 @@ import * as detector from './detector.js';
 import { renderDemoScene, DEMO_SIZE } from './demo.js';
 import { initRoutePanel, initAdminPanel } from './panels.js?v=map-1';
 import { createMap } from './map.js?v=map-1';
-import { createSidewalkScanner } from './scan.js?v=visible-1';
+import { createSidewalkScanner } from './scan.js?v=annotate-1';
+import { CALIB_NAMES, KIND_TEXT, annotateStep, annotateHint } from './annotate.js?v=annotate-1';
 import { bindVideoControls } from './video-controls.js?v=video-1';
 import { NEAR_LIMIT_CM, drawScanRegion, scanRegion } from './scan-region.js?v=video-1';
-import { assessLiveScan, updateLiveReport } from './live-scan.js?v=video-1';
+import { assessLiveScan, updateLiveReport } from './live-scan.js?v=annotate-1';
 
 const $ = (s) => document.querySelector(s);
 const view = $('#view');
@@ -28,7 +29,10 @@ const scanner = createSidewalkScanner({
   details: $('#scan-details'),
   getCalibration: () => state.calib,
   onResult: handleLiveScan,
-  onFailure: (source) => { if (source.kind === 'live') resetLiveAssessment('LIVE_SCAN_FAILED'); },
+  onFailure: (source) => {
+    if (source.kind === 'live') resetLiveAssessment('LIVE_SCAN_FAILED');
+    else { state.lastScan = null; markDirty(); }
+  },
 });
 
 const state = {
@@ -36,6 +40,10 @@ const state = {
   source: null, // { kind: 'video'|'image'|'live'|'demo', el, width, height }
   calibPts: [],
   calib: null,
+  lastScan: null,
+  judgedScan: null,
+  userCalibInputs: null,
+  pendingPoly: null,
   mode: 'view',
   obstacles: [], // { poly: 影像座標, category, label }
   floor: [], // 已確認可用的地面（影像座標）
@@ -53,7 +61,6 @@ const state = {
   dialog: null,
   pendingReport: null,
   sendingReport: false,
-  lastAnalyzeAt: 0,
   dirty: true,
   liveReport: null,
   liveResetAt: 0,
@@ -96,9 +103,17 @@ function updateThreshold() {
 }
 
 // ───────── 畫面來源 ─────────
+const CALIB_INPUTS = ['#p-rect-w', '#p-rect-l', '#p-near', '#p-edge-l', '#p-edge-r', '#p-range'];
+
 function setSource(src) {
+  if (src.kind !== 'demo' && state.userCalibInputs) {
+    for (const [id, value] of state.userCalibInputs) $(id).value = value;
+    state.userCalibInputs = null;
+  }
   if (state.dialog) closeDialog();
   state.source = src;
+  state.lastScan = null;
+  state.judgedScan = null;
   scanner.setSource(src);
   const scale = src.kind === 'video' || src.kind === 'live'
     ? Math.min(1, 960 / Math.max(src.width, src.height)) : 1;
@@ -121,7 +136,7 @@ function setSource(src) {
   for (const id of ['#profile', '#p-width', '#p-side']) $(id).disabled = live;
   resetLiveAssessment();
   updateThreshold();
-  if (src.kind !== 'demo') setMode('calib');
+  if (src.kind !== 'demo') setMode('annotate');
   markDirty();
 }
 
@@ -179,6 +194,7 @@ $('#demo').addEventListener('change', (e) => {
   if (!key) return;
   stopLive();
   const scene = renderDemoScene(key);
+  state.userCalibInputs ??= CALIB_INPUTS.map((id) => [id, $(id).value]);
   $('#p-rect-w').value = scene.rect.widthCm;
   $('#p-rect-l').value = scene.rect.lengthCm;
   $('#p-near').value = scene.rect.nearCm;
@@ -198,6 +214,8 @@ $('#demo').addEventListener('change', (e) => {
 // 影片控制
 const videoControls = bindVideoControls(video, $('#video-controls'), () => {
   scanner.reset();
+  state.lastScan = null;
+  state.judgedScan = null;
   state.detections = [];
   state.history = [];
   state.stable = null;
@@ -213,7 +231,8 @@ function dropStaleAnnotations() {
   if (state.source?.kind !== 'video') return;
   if (state.annotTime !== null &&
       Math.abs(video.currentTime - state.annotTime) > 0.05) {
-    clearAnnotations(false);
+    clearAnnotations();
+    refreshAnnotateUi();
     notice('畫面已改變，先前的人工標註只適用於當時的影格，已清除。');
   }
 }
@@ -225,6 +244,7 @@ function rebuildCalibration() {
   const p = params();
   state.calib = makeCalibration(state.calibPts, p.rect, { width: state.source.width, height: state.source.height });
   if (!state.calib) notice('校正失敗：請確認實際尺寸，並依近左、近右、遠右、遠左重點四角。');
+  refreshAnnotateUi();
   markDirty();
 }
 
@@ -232,9 +252,11 @@ $('#reset-calib').addEventListener('click', () => {
   resetLiveAssessment();
   state.calibPts = [];
   state.calib = null;
-  setMode('calib');
+  state.pendingPoly = null;
+  setMode('annotate');
   markDirty();
 });
+$('#recalib').addEventListener('click', () => $('#reset-calib').click());
 
 for (const id of ['#p-rect-w', '#p-rect-l', '#p-near']) $(id).addEventListener('input', () => rebuildCalibration());
 for (const id of ['#p-edge-l', '#p-edge-r', '#p-range', '#p-start-x', '#p-cell', '#p-margin', '#p-width', '#p-side']) {
@@ -243,62 +265,78 @@ for (const id of ['#p-edge-l', '#p-edge-r', '#p-range', '#p-start-x', '#p-cell',
 $('#profile').addEventListener('change', () => { updateThreshold(); markDirty(); });
 
 // ───────── 模式與標註 ─────────
-const CALIB_NAMES = ['近左', '近右', '遠右', '遠左'];
+const currentStep = () => annotateStep({ calibPts: state.calibPts, calib: state.calib, pending: state.pendingPoly });
+
+/** 模式只有兩個：'view' 檢視／'annotate' 標註（校正四角 → 圈範圍 → 選種類，依進度自動切換） */
 function setMode(mode) {
-  state.mode = mode;
-  state.draft = [];
-  document.querySelectorAll('.modes button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === mode)));
-  const hint = {
-    view: '檢視模式：畫面上的綠線是候選動線、紅線是瓶頸截面。',
-    calib: `地面校正：請依序點膠帶矩形的【近左、近右、遠右、遠左】四角。下一點：${CALIB_NAMES[state.calibPts.length % 4]}`,
-    floor: '標可用地面：只圈已確認可用、看得清楚的地面。未標記處保留未知。',
-    obstacle: '標障礙：沿著障礙物「貼地的範圍」逐點點出輪廓（不是物體頂部），完成後按「完成這個範圍」。',
-    occluder: '標遮擋：圈出看不到地面的區域（被擋住、太暗、模糊），程式會當作未知。',
-  }[mode];
-  $('#mode-hint').textContent = hint;
-  const annot = ['floor', 'obstacle', 'occluder'].includes(mode);
-  $('#annot-cat').hidden = mode !== 'obstacle';
-  $('#close-poly').hidden = !annot;
-  $('#undo').hidden = mode === 'view';
+  state.mode = mode === 'view' ? 'view' : 'annotate';
+  document.querySelectorAll('.modes button').forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.mode === state.mode)));
+  refreshAnnotateUi();
   markDirty();
 }
-document.querySelectorAll('.modes button').forEach((b) => b.addEventListener('click', () => {
-  if (b.dataset.mode === 'calib') state.calibPts = [];
-  setMode(b.dataset.mode);
-  if (b.dataset.mode === 'calib') { state.calib = null; resetLiveAssessment(); markDirty(); }
-}));
+
+function refreshAnnotateUi() {
+  const annotating = state.mode === 'annotate';
+  const s = currentStep();
+  $('#mode-hint').textContent = annotating
+    ? annotateHint(s, { calibCount: state.calibPts.length, draftCount: state.draft.length, live: state.source?.kind === 'live' })
+    : '檢視模式：畫面上的綠線是候選動線、紅線是瓶頸截面。要校正或圈範圍請按「標註」。';
+  $('#annot-choice').hidden = !(annotating && s === 'choose');
+  $('#close-poly').hidden = !(annotating && s === 'draw' && state.draft.length >= 3);
+  $('#undo').hidden = !annotating || (s === 'calib' && !state.calibPts.length) || (s === 'draw' && !state.draft.length);
+  $('#recalib').hidden = !state.calibPts.length;
+}
+
+document.querySelectorAll('.modes button').forEach((b) => b.addEventListener('click', () => setMode(b.dataset.mode)));
+
+$('#annot-choice').addEventListener('click', (e) => {
+  const b = e.target.closest('button[data-kind]');
+  if (!b || !state.pendingPoly) return;
+  const poly = state.pendingPoly;
+  if (b.dataset.kind === 'obstacle') {
+    const cat = $('#annot-cat').value;
+    const name = state.config.categories.find((c) => c.id === cat)?.name || '物品';
+    state.obstacles.push({ poly, category: cat, label: name });
+  } else if (b.dataset.kind === 'occluder') {
+    state.occluders.push(poly);
+  } else {
+    state.floor.push(poly);
+  }
+  state.pendingPoly = null;
+  state.annotTime = state.source?.kind === 'video' ? video.currentTime : null;
+  notice(`已標為「${KIND_TEXT[b.dataset.kind]}」。可以繼續圈下一個範圍，或按「檢視」看結果。`);
+  refreshAnnotateUi();
+  markDirty();
+});
 
 function clearAnnotations(withDirty = true) {
   state.obstacles = [];
   state.occluders = [];
   state.floor = [];
   state.draft = [];
+  state.pendingPoly = null;
   state.annotTime = null;
   if (withDirty) markDirty();
 }
-$('#clear-annot').addEventListener('click', () => clearAnnotations());
+$('#clear-annot').addEventListener('click', () => { clearAnnotations(); refreshAnnotateUi(); });
 
 $('#undo').addEventListener('click', () => {
-  if (state.mode === 'calib') { state.calibPts.pop(); state.calib = null; setMode('calib'); }
+  const s = currentStep();
+  if (s === 'calib') { state.calibPts.pop(); state.calib = null; resetLiveAssessment(); }
+  else if (s === 'choose') { state.draft = state.pendingPoly; state.pendingPoly = null; } // 回到圈範圍
   else state.draft.pop();
+  refreshAnnotateUi();
   markDirty();
 });
 
 $('#close-poly').addEventListener('click', closeDraft);
+/** 圈好一個範圍 → 等使用者選它是什麼（可用地面／障礙物／看不清楚） */
 function closeDraft() {
   if (state.draft.length < 3) { notice('至少要點 3 個點才能圍出範圍。'); return; }
-  const poly = state.draft.map((p) => [...p]);
-  if (state.mode === 'obstacle') {
-    const cat = $('#annot-cat').value;
-    const name = state.config.categories.find((c) => c.id === cat)?.name || '物品';
-    state.obstacles.push({ poly, category: cat, label: name });
-  } else if (state.mode === 'occluder') {
-    state.occluders.push(poly);
-  } else if (state.mode === 'floor') {
-    state.floor.push(poly);
-  }
-  state.annotTime = state.source?.kind === 'video' ? video.currentTime : null;
+  state.pendingPoly = state.draft.map((p) => [...p]);
   state.draft = [];
+  refreshAnnotateUi();
+  $('#annot-choice button')?.focus();
   markDirty();
 }
 
@@ -307,24 +345,30 @@ view.addEventListener('pointerdown', (e) => {
   const r = view.getBoundingClientRect();
   const pt = [((e.clientX - r.left) / r.width) * state.source.width,
     ((e.clientY - r.top) / r.height) * state.source.height];
-  if (state.mode === 'calib') {
+  const s = currentStep();
+  if (state.source.kind === 'video' && !video.paused) video.pause();
+  if (s === 'calib') {
     if (state.calibPts.length >= 4) state.calibPts = [];
     state.calibPts.push(pt);
     if (state.calibPts.length === 4) {
       rebuildCalibration();
-      if (state.calib) setMode('view');
-    } else {
-      setMode('calib');
+      if (!state.calib) state.calibPts = []; // 校正失敗（點交叉等）→ 重點四角
+      else notice('地面校正完成。可以直接按「檢視」看 AI 掃描的判斷，或繼續圈範圍。');
     }
+    refreshAnnotateUi();
+  } else if (s === 'choose') {
+    notice('請先選剛圈好的範圍是什麼，或按「復原一點」修改。');
+    return;
   } else {
     if (state.source.kind === 'live') { notice('即時鏡頭持續變動。請用照片或暫停影片做人工標註。'); return; }
-    if (state.source.kind === 'video' && !video.paused) video.pause();
+    if (state.source.kind === 'video') state.annotTime = video.currentTime;
     // 點回第一個點附近 → 自動完成
     if (state.draft.length >= 3) {
       const [fx, fy] = state.draft[0];
       if (Math.hypot(fx - pt[0], fy - pt[1]) < state.source.width * 0.02) { closeDraft(); return; }
     }
     state.draft.push(pt);
+    refreshAnnotateUi();
   }
   markDirty();
 });
@@ -363,8 +407,13 @@ $('#live-confirm').addEventListener('change', () => {
 });
 
 function handleLiveScan(scan) {
-  if (scan.source.kind !== 'live' || scan.source !== state.source ||
-      scan.capturedAt < state.liveResetAt || !state.calib || !$('#live-confirm').checked) return;
+  if (scan.source !== state.source) return;
+  if (scan.source.kind !== 'live') {
+    state.lastScan = scan;
+    markDirty();
+    return;
+  }
+  if (scan.capturedAt < state.liveResetAt || !state.calib || !$('#live-confirm').checked) return;
   const { grid, result, obstacle } = assessLiveScan(scan, state.calib, params());
   state.liveReport = updateLiveReport(state.liveReport, result.status);
   if (result.status === 'BLOCKED' && state.liveReport.blocked < 3) {
@@ -383,46 +432,71 @@ function handleLiveScan(scan) {
   }
 }
 
+const VIDEO_SCAN_MAX_LAG = 4;
+
+function scanForCurrentFrame() {
+  const scan = state.lastScan;
+  if (!scan || scan.source.kind !== 'video') return scan;
+  const limit = video.paused ? 0.05 : VIDEO_SCAN_MAX_LAG;
+  return !video.seeking && scan.calibration === state.calib &&
+    Math.abs(video.currentTime - scan.frame) < limit ? scan : null;
+}
+
 function analyze() {
-  if (state.source?.kind === 'live') return;
+  const source = state.source;
+  if (!source || source.kind === 'live') return;
   const p = params();
   const calib = state.calib;
-  let r;
-  let origin = '人工標註';
-  let labels = [];
-  if (!calib) {
-    state.grid = null;
-    r = assess(null, p);
-  } else {
+  const scan = scanForCurrentFrame();
+  const labels = [];
+  const manual = state.floor.length || state.obstacles.length || state.occluders.length;
+  let origin = scan ? 'AI 已掃描，請完成地面校正' : '人工標註';
+  let result;
+  state.grid = null;
+  if (calib) {
     const blockedGround = [];
     const unknownImage = [...state.occluders];
-    for (const o of state.obstacles) {
-      const g = o.poly.map((pt) => imageToGround(calib, pt));
-      if (g.some((x) => !x)) { unknownImage.push(o.poly); continue; } // 地平線以上：無法定位 → 未知
-      blockedGround.push(g);
-      labels.push({ ground: g, label: o.label, category: o.category, origin: 'manual' });
+    for (const obstacle of state.obstacles) {
+      const ground = obstacle.poly.map((point) => imageToGround(calib, point));
+      if (ground.some((point) => !point)) { unknownImage.push(obstacle.poly); continue; }
+      blockedGround.push(ground);
+      labels.push({ ground, label: obstacle.label, category: obstacle.category, origin: 'manual' });
     }
-    const detFresh = p.auto && performance.now() - state.detAt < 1500;
-    if (detFresh) {
-      for (const d of state.detections) {
-        const [x, y, w, h] = d.bbox;
-        unknownImage.push([[x, y], [x + w, y], [x + w, y + h], [x, y + h]]);
+    const automatic = scan && assessLiveScan(scan, calib, p, { freeImage: state.floor, unknownImage, blockedGround });
+    if (automatic && (automatic.grid || !manual)) {
+      state.grid = automatic.grid;
+      result = automatic.result;
+      origin = manual ? 'AI 掃描＋人工圈選修正＋地面校正' : 'AI 掃描＋地面校正';
+      if (source.kind === 'video') origin += '（影片 ' + scan.frame.toFixed(1) + ' 秒）';
+      if (automatic.obstacle) labels.push({ ...automatic.obstacle, origin: 'model' });
+    } else {
+      const detFresh = p.auto && performance.now() - state.detAt < 1500;
+      if (detFresh) {
+        for (const { bbox: [x, y, w, h] } of state.detections) {
+          unknownImage.push([[x, y], [x + w, y], [x + w, y + h], [x, y + h]]);
+        }
       }
+      origin = source.kind === 'demo' ? '示範預設標註' : manual ? '人工標註' : '等待已校正影格的掃描';
+      if (detFresh && state.detections.length) origin += '＋模型標出的未知區';
+      state.grid = buildGrid({
+        calib, corridor: p.corridor, range: p.range, cellCm: p.cellCm,
+        freeImage: state.floor, blockedGround, unknownImage, marginCm: p.marginCm,
+      });
     }
-    if (state.source.kind === 'demo') origin = '示範預設標註';
-    else if (!state.floor.length && !labels.length && !state.occluders.length) origin = '尚無已確認的地面或阻隔';
-    if (detFresh && state.detections.length) origin += '＋模型標出的未知區';
-    state.grid = buildGrid({
-      calib, corridor: p.corridor, range: p.range, cellCm: p.cellCm,
-      freeImage: state.floor, blockedGround, unknownImage, marginCm: p.marginCm,
-    });
-    r = assess(state.grid, { requiredCm: p.requiredCm, startXCm: p.startXCm });
   }
-  state.result = r;
+  result ??= assess(state.grid, p);
+  state.result = result;
   state.labels = labels;
   state.origin = origin;
-  showResult(r, origin);
-  stabilizeAndAlert(r, labels);
+  showResult(result, origin);
+  if (!isDynamic() || (scan && scan !== state.judgedScan)) {
+    state.judgedScan = scan;
+    stabilizeAndAlert(result, labels);
+  } else if (!scan) {
+    state.history = [];
+    state.stable = null;
+    if (state.dialog) closeDialog();
+  }
 }
 
 function showResult(r, origin) {
@@ -463,6 +537,7 @@ function nearestLabel(labels, y) {
   let best = labels[0];
   let bestD = Infinity;
   for (const l of labels) {
+    if (!l.ground) continue;
     const ys = l.ground.map((p) => p[1]);
     const d = y < Math.min(...ys) ? Math.min(...ys) - y : y > Math.max(...ys) ? y - Math.max(...ys) : 0;
     if (d < bestD) { bestD = d; best = l; }
@@ -733,16 +808,18 @@ function drawView() {
       vctx.fillText(`${d.label} ${(d.score * 100).toFixed(0)}%（模型推估）`, x + 4 * k, y + 18 * k);
     }
   }
+  if (state.pendingPoly) drawPoly(vctx, state.pendingPoly, { fill: 'rgba(255,225,77,0.35)', stroke: '#ffe14d', width: 3 * k });
   // 草稿
   if (state.draft.length) {
     drawLine(vctx, state.draft, '#ffe14d', 3 * k);
     state.draft.forEach((pt) => { vctx.fillStyle = '#ffe14d'; vctx.beginPath(); vctx.arc(pt[0], pt[1], 6 * k, 0, Math.PI * 2); vctx.fill(); });
   }
   // 結果：候選動線、瓶頸
-  const r = state.result;
+  const r = state.source.kind === 'video' && (!video.paused || video.seeking) ? null : state.result;
   if (c && r?.path) drawLine(vctx, r.path.map((q) => groundToImage(c, [q.x, q.y])), '#22c55e', 8 * k);
   if (c && r?.bottleneck) {
-    drawLine(vctx, [groundToImage(c, [p.corridor.leftCm, r.bottleneck.yCm]), groundToImage(c, [p.corridor.rightCm, r.bottleneck.yCm])], '#ff3b30', 6 * k);
+    const { leftCm, rightCm } = state.grid?.corridor ?? p.corridor;
+    drawLine(vctx, [groundToImage(c, [leftCm, r.bottleneck.yCm]), groundToImage(c, [rightCm, r.bottleneck.yCm])], '#ff3b30', 6 * k);
   }
 }
 
@@ -794,15 +871,21 @@ function loop(now) {
     if (!document.hidden) void scanner.tick(now);
     const dyn = isDynamic();
     if (s.kind === 'video') {
-      if (video.currentTime !== lastVideoTime) { lastVideoTime = video.currentTime; dropStaleAnnotations(); markDirty(); }
+      if (video.currentTime !== lastVideoTime) {
+        lastVideoTime = video.currentTime;
+        dropStaleAnnotations();
+        if (state.lastScan && video.currentTime - state.lastScan.frame > VIDEO_SCAN_MAX_LAG) {
+          state.lastScan = null;
+          markDirty();
+        }
+      }
     }
     const detectionInterval = s.kind === 'video' || s.kind === 'live' ? 1200 : 400;
     if ($('#auto-on').checked && now - lastDetRun > detectionInterval && (dyn || state.dirty)) {
       lastDetRun = now;
       runDetection();
     }
-    if (s.kind !== 'live' && (dyn ? now - state.lastAnalyzeAt > 200 : state.dirty)) {
-      state.lastAnalyzeAt = now;
+    if (s.kind !== 'live' && state.dirty) {
       state.dirty = false;
       analyze();
       drawBird();

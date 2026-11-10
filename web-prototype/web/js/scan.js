@@ -210,15 +210,14 @@ export function createSidewalkScanner({ status, preview, button, details, getCal
       preview.hidden = false;
       details.hidden = false;
       const scene = painted ? '已標示疑似藍綠色人行標線區（黃色），路面用途待確認。'
-        : sidewalk ? '已標示可見的人行道（綠色）。' : '這一格未辨識到足夠的人行道特徵，通行狀態待確認。';
+        : sidewalk ? '已標示可見的人行道（綠色）。' : '這一格未標出可信的人行道色塊。通行判斷請看結果區。';
       const obstacles = possibleObstacles.length ? `疑似靠近人行道的物體：${possibleObstacles.join('、')}。` : '';
       const time = current.kind === 'video' ? `影片 ${frame.toFixed(1)} 秒。\n` : '';
-      const widthHint = current.kind === 'live' || !sidewalk ? '' : ' 通行淨寬待確認。';
       const scope = !isVideo ? '' : region.endCm === null
         ? '範圍：畫面近端（尚未校正距離）。'
         : '範圍：校正區內，最遠前方 ' + (region.endCm / 100).toFixed(1) + ' 公尺。';
-      status.textContent = `掃描完成。${time}${scope}${scene}${obstacles}${widthHint}`;
-      onResult?.({ labels, sidewalk, painted, capturedAt, region, snapshot: evidence ?? snapshot, source: current });
+      status.textContent = `掃描完成。${time}${scope}${scene}${obstacles}`;
+      onResult?.({ labels, sidewalk, painted, capturedAt, frame, calibration, region, snapshot: evidence ?? snapshot, source: current });
     } catch (error) {
       if (request !== generation) return;
       failed = true;

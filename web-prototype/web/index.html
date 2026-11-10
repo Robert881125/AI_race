@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>無礙智瞳 原型</title>
-  <link rel="stylesheet" href="css/style.css?v=visible-1">
+  <link rel="stylesheet" href="css/style.css?v=annotate-1">
 </head>
 <body>
 <header class="top">
-  <div class="brand"><strong>無礙智瞳</strong><span class="ver">網頁原型 v0.3.2</span></div>
+  <div class="brand"><strong>無礙智瞳</strong><span class="ver">網頁原型 v0.3.3</span></div>
   <nav class="tabs" role="tablist" aria-label="功能">
     <button role="tab" id="tab-btn-camera" aria-controls="tab-camera" aria-selected="true">鏡頭判斷</button>
     <button role="tab" id="tab-btn-route" aria-controls="tab-route" aria-selected="false">路線提醒</button>
@@ -97,18 +97,23 @@
 
     <div class="modes" role="group" aria-label="畫面操作模式">
       <button type="button" data-mode="view" aria-pressed="true">檢視</button>
-      <button type="button" data-mode="calib" aria-pressed="false">地面校正</button>
-      <button type="button" data-mode="floor" aria-pressed="false">標可用地面</button>
-      <button type="button" data-mode="obstacle" aria-pressed="false">標障礙</button>
-      <button type="button" data-mode="occluder" aria-pressed="false">標遮擋</button>
+      <button type="button" data-mode="annotate" aria-pressed="false">標註（校正＋圈範圍）</button>
     </div>
     <div class="row annot" id="annot-tools">
-      <p id="mode-hint" class="muted small"></p>
+      <p id="mode-hint" class="muted small" aria-live="polite"></p>
+      <div class="annot-choice" id="annot-choice" role="group" aria-label="這個範圍是什麼" hidden>
+        <button type="button" data-kind="floor">可用地面</button>
+        <span class="obstacle-pick">
+          <button type="button" data-kind="obstacle">障礙物</button>
+          <select id="annot-cat" aria-label="障礙物類別"></select>
+        </span>
+        <button type="button" data-kind="occluder">看不清楚（遮擋）</button>
+      </div>
       <div class="row">
-        <select id="annot-cat" aria-label="障礙類別"></select>
         <button type="button" id="close-poly">完成這個範圍</button>
         <button type="button" id="undo">復原一點</button>
-        <button type="button" id="clear-annot">清除標註</button>
+        <button type="button" id="recalib">重新校正</button>
+        <button type="button" id="clear-annot">清除圈選</button>
       </div>
     </div>
 
@@ -161,7 +166,7 @@
 
     <details class="params" id="calibration-settings">
       <summary>校正與參數（團隊試跑用）</summary>
-      <p class="muted small">地面校正：在地上用膠帶貼一個量好的矩形，切到「地面校正」後依序點【近左、近右、遠右、遠左】四角。</p>
+      <p class="muted small">在你要通過的平坦路面量出矩形，按「標註」依序點【近左、近右、遠右、遠左】四角。影片請先暫停；鏡頭角度改變時需重新校正。</p>
       <div class="param-grid">
         <label>矩形寬（cm）<input type="number" id="p-rect-w" value="120" min="20" step="1"></label>
         <label>矩形長（cm）<input type="number" id="p-rect-l" value="200" min="20" step="1"></label>
@@ -211,6 +216,6 @@
 </footer>
 
 <video id="video" class="offscreen" playsinline muted></video>
-<script type="module" src="js/app.js?v=visible-1"></script>
+<script type="module" src="js/app.js?v=annotate-1"></script>
 </body>
 </html>

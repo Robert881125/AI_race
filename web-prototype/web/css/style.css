@@ -199,3 +199,7 @@ input[type="checkbox"] { width: 22px; height: 22px; }
 #scan-preview:not([hidden]) + .scan-preview-empty { display: none; }
 #video-control-msg { margin: 0; }
 #video-control-msg:empty { display: none; }
+
+.annot-choice { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 10px; border: 2px solid var(--accent); border-radius: 10px; }
+.annot-choice button { min-height: 52px; font-size: 1.05rem; }
+.obstacle-pick { display: inline-flex; gap: 6px; align-items: center; }
