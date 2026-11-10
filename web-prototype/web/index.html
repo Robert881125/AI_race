@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>無礙智瞳 原型</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand"><strong>無礙智瞳</strong><span class="ver">網頁原型 v0.1</span></div>
+  <nav class="tabs" role="tablist" aria-label="功能">
+    <button role="tab" id="tab-btn-camera" aria-controls="tab-camera" aria-selected="true">鏡頭判斷</button>
+    <button role="tab" id="tab-btn-route" aria-controls="tab-route" aria-selected="false">路線提醒</button>
+    <button role="tab" id="tab-btn-admin" aria-controls="tab-admin" aria-selected="false">治理端</button>
+  </nav>
+</header>
+
+<main>
+  <p class="route-msg" id="demo-mode" hidden>公開展示模式：可在同一個分頁切換使用者 A、B 和治理端。事件只保留到重新整理，不會送出或與其他裝置同步。</p>
+  <!-- ───────── 使用者 A：鏡頭判斷 ───────── -->
+  <section id="tab-camera" role="tabpanel" aria-labelledby="tab-btn-camera">
+    <div class="row">
+      <label class="field">目前路段<select id="segment"></select></label>
+      <label class="field">行動方式<select id="profile"></select></label>
+    </div>
+    <p id="threshold" class="muted small"></p>
+
+    <div class="row sources">
+      <label class="btn">選擇影片或照片<input type="file" id="file" accept="video/*,image/*" hidden></label>
+      <button class="btn" id="live" type="button">開啟鏡頭</button>
+      <label class="field inline">示範畫面
+        <select id="demo">
+          <option value="">（不使用）</option>
+          <option value="clear">淨空</option>
+          <option value="side">紙箱靠邊</option>
+          <option value="middle">紙箱在中間</option>
+          <option value="hidden">行人擋住視線</option>
+        </select>
+      </label>
+    </div>
+
+    <div class="stage-wrap">
+      <canvas id="view" width="960" height="720" aria-label="鏡頭畫面與判斷疊圖"></canvas>
+      <p id="stage-hint" class="stage-hint">請先選擇影片、照片、開啟鏡頭，或使用示範畫面</p>
+    </div>
+
+    <div class="row" id="video-controls" hidden>
+      <button type="button" id="play">播放</button>
+      <button type="button" id="back">◀ 0.5 秒</button>
+      <button type="button" id="fwd">0.5 秒 ▶</button>
+      <span id="time" class="muted small"></span>
+    </div>
+
+    <div class="modes" role="group" aria-label="畫面操作模式">
+      <button type="button" data-mode="view" aria-pressed="true">檢視</button>
+      <button type="button" data-mode="calib" aria-pressed="false">地面校正</button>
+      <button type="button" data-mode="floor" aria-pressed="false">標可用地面</button>
+      <button type="button" data-mode="obstacle" aria-pressed="false">標障礙</button>
+      <button type="button" data-mode="occluder" aria-pressed="false">標遮擋</button>
+    </div>
+    <div class="row annot" id="annot-tools">
+      <p id="mode-hint" class="muted small"></p>
+      <div class="row">
+        <select id="annot-cat" aria-label="障礙類別"></select>
+        <button type="button" id="close-poly">完成這個範圍</button>
+        <button type="button" id="undo">復原一點</button>
+        <button type="button" id="clear-annot">清除標註</button>
+      </div>
+    </div>
+
+    <div class="result" id="result" data-status="UNKNOWN">
+      <div class="status" id="status" aria-live="polite">無法確認</div>
+      <div id="reason"></div>
+      <div id="evidence" class="muted small"></div>
+    </div>
+
+    <div class="grid-wrap">
+      <canvas id="bird" width="320" height="400" aria-label="地面俯視格網"></canvas>
+      <ul class="legend small">
+        <li><span class="sw sw-free"></span>已觀察的可用地面</li>
+        <li><span class="sw sw-blocked"></span>確定阻隔</li>
+        <li><span class="sw sw-unknown"></span>未知（看不到或量不準）</li>
+        <li><span class="sw sw-path"></span>候選動線</li>
+        <li><span class="sw sw-bottleneck"></span>瓶頸截面</li>
+        <li class="muted">下方是輪椅端，上方是前方。近端盲區假設已淨空（受控測試）。</li>
+      </ul>
+    </div>
+
+    <div class="row toggles">
+      <label><input type="checkbox" id="voice-on" checked> 語音提示與聆聽</label>
+      <label><input type="checkbox" id="auto-on"> 自動偵測（模型推估，需網路）</label>
+    </div>
+    <p id="auto-status" class="muted small"></p>
+
+    <div class="consent" id="consent" hidden>
+      <p class="q" id="consent-q"></p>
+      <p class="muted small" id="consent-hint"></p>
+      <div class="big-btns">
+        <button type="button" class="big primary" id="yes">回報</button>
+        <button type="button" class="big" id="no">不用</button>
+      </div>
+    </div>
+
+    <div class="big-btns">
+      <button type="button" class="big" id="manual">我要回報</button>
+    </div>
+    <div class="manual" id="manual-panel" hidden>
+      <p class="q">要回報什麼？</p>
+      <p class="muted small" id="manual-hint"></p>
+      <div id="manual-cats" class="cat-grid"></div>
+      <button type="button" id="manual-cancel">取消</button>
+    </div>
+
+    <p id="report-msg" class="report-msg" aria-live="polite"></p>
+    <button type="button" id="retry" hidden>重新送出</button>
+
+    <details class="params">
+      <summary>校正與參數（團隊試跑用）</summary>
+      <p class="muted small">地面校正：在地上用膠帶貼一個量好的矩形，切到「地面校正」後依序點【近左、近右、遠右、遠左】四角。</p>
+      <div class="param-grid">
+        <label>矩形寬（cm）<input type="number" id="p-rect-w" value="120" min="20" step="1"></label>
+        <label>矩形長（cm）<input type="number" id="p-rect-l" value="200" min="20" step="1"></label>
+        <label>輪椅前緣到矩形近端（cm）<input type="number" id="p-near" value="50" min="0" step="1"></label>
+        <label>通道左緣外推（cm）<input type="number" id="p-edge-l" value="0" step="1"></label>
+        <label>通道右緣外推（cm）<input type="number" id="p-edge-r" value="0" step="1"></label>
+        <label>分析到多遠（cm，空白＝矩形遠端）<input type="number" id="p-range" placeholder="自動" min="20" step="1"></label>
+        <label>輪椅中心相對矩形中線（cm）<input type="number" id="p-start-x" value="0" step="1"></label>
+        <label>格子大小（cm）<input type="number" id="p-cell" value="5" min="2" max="20" step="1"></label>
+        <label>量測誤差（cm）<input type="number" id="p-margin" value="5" min="0" max="30" step="1"></label>
+        <label>實量車寬（cm，空白＝依行動方式）<input type="number" id="p-width" placeholder="自動" min="30" step="1"></label>
+        <label>實量兩側餘裕（cm，空白＝依行動方式）<input type="number" id="p-side" placeholder="自動" min="0" step="1"></label>
+      </div>
+      <button type="button" id="reset-calib">清除校正</button>
+    </details>
+  </section>
+
+  <!-- ───────── 使用者 B：路線提醒 ───────── -->
+  <section id="tab-route" role="tabpanel" aria-labelledby="tab-btn-route" hidden>
+    <p class="muted small">模擬第二位使用者：出發前檢查預定路線上有沒有其他人回報的路障。</p>
+    <label class="field">預定路線<select id="route"></select></label>
+    <div class="big-btns">
+      <button type="button" class="big primary" id="route-check">出發前檢查</button>
+    </div>
+    <div class="toggles"><label><input type="checkbox" id="route-watch"> 行進中持續留意這條路線（每 5 秒更新）</label></div>
+    <div class="route-msg" id="route-msg" aria-live="polite"></div>
+    <div class="big-btns" id="route-actions" hidden>
+      <button type="button" class="big primary" id="route-alt">檢查並切換替代路線</button>
+      <button type="button" class="big" id="route-keep">維持原路線</button>
+    </div>
+    <div class="route-msg" id="route-alt-msg" aria-live="polite"></div>
+  </section>
+
+  <!-- ───────── 治理端 ───────── -->
+  <section id="tab-admin" role="tabpanel" aria-labelledby="tab-btn-admin" hidden>
+    <p class="muted small">模擬治理端：查看共享路況事件，並更新為現地確認或已排除。警方勤務系統介接不在本版範圍。</p>
+    <div id="admin-list" class="admin-list"></div>
+  </section>
+</main>
+
+<footer class="foot small muted">
+  v0.1 限制：只判斷平坦路面上已校正的一小段；尚未計入車身長度與轉彎；距離與左右方向未經實測驗證，因此語音不報數字、不說「可以通過」。影像只在本機瀏覽器處理，不上傳。
+</footer>
+
+<video id="video" class="offscreen" playsinline muted></video>
+<script type="module" src="js/app.js"></script>
+</body>
+</html>
