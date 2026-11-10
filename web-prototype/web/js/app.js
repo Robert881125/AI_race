@@ -6,11 +6,12 @@ import {
   FREE, BLOCKED, UNKNOWN, STATUS_TEXT, REASON_TEXT,
 } from './assess.js?v=review-1';
 import { classifyConsent } from './intent.js';
-import * as api from './api.js';
+import * as api from './api.js?v=map-1';
 import * as voice from './voice.js';
 import * as detector from './detector.js';
 import { renderDemoScene, DEMO_SIZE } from './demo.js';
-import { initRoutePanel, initAdminPanel } from './panels.js';
+import { initRoutePanel, initAdminPanel } from './panels.js?v=map-1';
+import { createMap } from './map.js?v=map-1';
 import { createSidewalkScanner } from './scan.js?v=live-width-1';
 import { assessLiveScan, updateLiveReport } from './live-scan.js?v=review-1';
 
@@ -820,8 +821,15 @@ async function init() {
   });
   updateThreshold();
   setMode('view');
-  initRoutePanel(cfg, voiceOn);
-  admin = initAdminPanel(cfg);
+  // 地圖（討論08）：只是輔助，文字區仍是完整資訊；地圖載入失敗不影響其他功能
+  const routeMap = createMap($('#route-map'), cfg, { note: $('#route-map-note') });
+  const adminMap = createMap($('#admin-map'), cfg, { note: $('#admin-map-note'), includeCleared: false });
+  adminMap.onMarkerClick((id) => {
+    const card = document.querySelector(`#admin-list [data-event-id="${CSS.escape(id)}"]`);
+    if (card) { card.scrollIntoView({ behavior: 'smooth', block: 'center' }); card.focus({ preventScroll: true }); }
+  });
+  initRoutePanel(cfg, voiceOn, undefined, { onRoute: (id) => routeMap.setRoute(id), onEvents: (events) => routeMap.setEvents(events) });
+  admin = initAdminPanel(cfg, { onEvents: (events) => adminMap.setEvents(events) });
   drawBird();
   requestAnimationFrame(loop);
 }

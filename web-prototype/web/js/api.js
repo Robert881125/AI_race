@@ -16,7 +16,7 @@ let demoStore = null;
 
 export async function getConfig() {
   // Pages 的發布產物將 config.json 放在 index.html 旁。Python 模式走原本的 API。
-  const response = await fetch(new URL('../config.json', import.meta.url));
+  const response = await fetch(new URL('../config.json?v=map-1', import.meta.url));
   if (response.status === 404) return request('GET', '/api/config');
   if (!response.ok) throw new Error(`展示設定載入失敗（${response.status}）`);
   const config = await response.json();

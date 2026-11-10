@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>無礙智瞳 原型</title>
-  <link rel="stylesheet" href="css/style.css?v=0.2">
+  <link rel="stylesheet" href="css/style.css?v=map-1">
 </head>
 <body>
 <header class="top">
-  <div class="brand"><strong>無礙智瞳</strong><span class="ver">網頁原型 v0.2.3</span></div>
+  <div class="brand"><strong>無礙智瞳</strong><span class="ver">網頁原型 v0.3.0</span></div>
   <nav class="tabs" role="tablist" aria-label="功能">
     <button role="tab" id="tab-btn-camera" aria-controls="tab-camera" aria-selected="true">鏡頭判斷</button>
     <button role="tab" id="tab-btn-route" aria-controls="tab-route" aria-selected="false">路線提醒</button>
@@ -155,6 +155,8 @@
   <section id="tab-route" role="tabpanel" aria-labelledby="tab-btn-route" hidden>
     <p class="muted small">模擬第二位使用者：出發前檢查預定路線上有沒有其他人回報的路障。</p>
     <label class="field">預定路線<select id="route"></select></label>
+    <div id="route-map" class="map" role="region" aria-label="路線地圖：實線是目前選的路線，虛線是其他路線，圓點是路障回報"></div>
+    <p id="route-map-note" class="muted small"></p>
     <div class="big-btns">
       <button type="button" class="big primary" id="route-check">出發前檢查</button>
     </div>
@@ -170,6 +172,8 @@
   <!-- ───────── 治理端 ───────── -->
   <section id="tab-admin" role="tabpanel" aria-labelledby="tab-btn-admin" hidden>
     <p class="muted small">模擬治理端：查看共享路況事件，並更新為現地確認或已排除。警方勤務系統介接不在本版範圍。</p>
+    <div id="admin-map" class="map" role="region" aria-label="回報點位地圖：橘色待確認、紅色現地確認、灰色已過期；點圓點可跳到下方對應的事件"></div>
+    <p id="admin-map-note" class="muted small"></p>
     <div id="admin-list" class="admin-list"></div>
   </section>
 </main>
@@ -179,6 +183,6 @@
 </footer>
 
 <video id="video" class="offscreen" playsinline muted></video>
-<script type="module" src="js/app.js?v=review-1"></script>
+<script type="module" src="js/app.js?v=map-1"></script>
 </body>
 </html>

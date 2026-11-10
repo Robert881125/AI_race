@@ -1,27 +1,30 @@
 {
-  "_說明": "試跑前依實際場地修改。路段、動線與走查時間都是示範值。",
+  "_說明": "試跑前依實際場地修改。路段線形取自 OpenStreetMap（© OpenStreetMap contributors，ODbL，2026-11-10 匯出，馬公中正路一帶）；走查時間與障礙都是示範值，尚未實地走查。",
   "segments": [
-    { "id": "S1", "name": "試跑騎樓 第 1 段（東側）" },
-    { "id": "S2", "name": "試跑騎樓 第 2 段（東側）" },
-    { "id": "S3", "name": "對面人行道（西側）" }
+    { "id": "S1", "name": "中正路（民生路—仁愛路）", "osm": "way 73775031",
+      "path": [[23.567621, 119.565589], [23.567302, 119.565557], [23.567247, 119.565551], [23.566947, 119.565521], [23.56661, 119.565479], [23.566278, 119.565438], [23.566008, 119.56541], [23.565942, 119.565402], [23.565555, 119.565358]] },
+    { "id": "S2", "name": "中正路（仁愛路—惠民路）", "osm": "way 928645758",
+      "path": [[23.565555, 119.565358], [23.565335, 119.565337], [23.565002, 119.565307], [23.564758, 119.565284]] },
+    { "id": "S3", "name": "民生路西段→惠民一路→惠民路（替代）", "osm": "way 332472677、105758349、1280146332、60876539（部分）",
+      "path": [[23.567621, 119.565589], [23.567636, 119.56488], [23.567263, 119.564821], [23.567148, 119.564799], [23.566454, 119.564742], [23.566033, 119.564712], [23.565966, 119.564707], [23.565716, 119.564667], [23.565431, 119.564644], [23.56522, 119.56463], [23.564926, 119.564589], [23.56486, 119.564879], [23.564758, 119.565284]] }
   ],
   "routes": [
-    { "id": "A", "name": "A 動線（原路線）", "segments": ["S1", "S2"], "checkedAt": "2026-11-10T09:00:00+08:00" },
-    { "id": "B", "name": "B 動線（替代路線，走對面人行道）", "segments": ["S3"], "checkedAt": "2026-11-10T09:30:00+08:00" }
+    {"id": "A", "name": "A 動線：中正路（原路線，約 320 公尺）", "segments": ["S1", "S2"], "checkedAt": "2026-11-10T09:00:00+08:00"},
+    {"id": "B", "name": "B 動線：惠民一路繞行（替代路線，約 450 公尺）", "segments": ["S3"], "checkedAt": "2026-11-10T09:30:00+08:00"}
   ],
-  "alternatives": { "A": "B" },
+  "alternatives": {"A": "B"},
   "categories": [
-    { "id": "motorcycle", "name": "機車", "expireHours": 0.5 },
-    { "id": "bicycle", "name": "自行車", "expireHours": 2 },
-    { "id": "goods", "name": "雜物或貨物", "expireHours": 24 },
-    { "id": "sign", "name": "立牌或招牌", "expireHours": 24 },
-    { "id": "fence", "name": "施工圍籬", "expireHours": 168 },
-    { "id": "step", "name": "高低落差", "expireHours": 720 },
-    { "id": "other", "name": "其他", "expireHours": 24 }
+    {"id": "motorcycle", "name": "機車", "expireHours": 0.5},
+    {"id": "bicycle", "name": "自行車", "expireHours": 2},
+    {"id": "goods", "name": "雜物或貨物", "expireHours": 24},
+    {"id": "sign", "name": "立牌或招牌", "expireHours": 24},
+    {"id": "fence", "name": "施工圍籬", "expireHours": 168},
+    {"id": "step", "name": "高低落差", "expireHours": 720},
+    {"id": "other", "name": "其他", "expireHours": 24}
   ],
   "profiles": [
-    { "id": "manual", "name": "手動輪椅", "widthCm": 70, "sideMarginCm": 10 },
-    { "id": "power", "name": "電動輪椅", "widthCm": 75, "sideMarginCm": 10 },
-    { "id": "stroller", "name": "推嬰兒車", "widthCm": 60, "sideMarginCm": 10 }
+    {"id": "manual", "name": "手動輪椅", "widthCm": 70, "sideMarginCm": 10},
+    {"id": "power", "name": "電動輪椅", "widthCm": 75, "sideMarginCm": 10},
+    {"id": "stroller", "name": "推嬰兒車", "widthCm": 60, "sideMarginCm": 10}
   ]
 }

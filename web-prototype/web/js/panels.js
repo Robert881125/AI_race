@@ -1,6 +1,6 @@
 // 使用者 B 的路線提醒、治理端事件列表。
 
-import * as api from './api.js';
+import * as api from './api.js?v=map-1';
 import * as voice from './voice.js';
 
 const $ = (s) => document.querySelector(s);
@@ -16,7 +16,8 @@ function esc(s) {
 }
 
 // ───────── 使用者 B：路線提醒 ─────────
-export function initRoutePanel(config, isVoiceOn, loadEvents = api.listEvents) {
+/** hooks（可省略）：onRoute(routeId) 選定路線改變時、onEvents(events) 取得路況後；給地圖用 */
+export function initRoutePanel(config, isVoiceOn, loadEvents = api.listEvents, hooks = {}) {
   const segName = Object.fromEntries(config.segments.map((s) => [s.id, s.name]));
   const routes = Object.fromEntries(config.routes.map((r) => [r.id, r]));
   const sel = $('#route');
@@ -53,6 +54,7 @@ export function initRoutePanel(config, isVoiceOn, loadEvents = api.listEvents) {
       return;
     }
     if (sequence !== checkSequence) return;
+    hooks.onEvents?.(events);
     const { active, expired } = onRoute(events, route);
     const fresh = active.filter((e) => !seen.has(e.id));
     if (active.length) {
@@ -105,6 +107,7 @@ export function initRoutePanel(config, isVoiceOn, loadEvents = api.listEvents) {
       return;
     }
     sel.value = alt.id;
+    hooks.onRoute?.(alt.id);
     seen.clear();
     actions.hidden = true;
     altMsg.className = 'route-msg ok';
@@ -125,6 +128,7 @@ export function initRoutePanel(config, isVoiceOn, loadEvents = api.listEvents) {
     altMsg.textContent = '維持原路線。接近回報路段時請留意。';
   });
   sel.addEventListener('change', () => {
+    hooks.onRoute?.(sel.value);
     checkSequence++;
     alternativeSequence++;
     seen.clear();
@@ -132,6 +136,7 @@ export function initRoutePanel(config, isVoiceOn, loadEvents = api.listEvents) {
     altMsg.textContent = '';
     actions.hidden = true;
   });
+  hooks.onRoute?.(sel.value);
   $('#route-watch').addEventListener('change', (e) => {
     clearInterval(timer);
     if (e.target.checked) {
@@ -142,7 +147,7 @@ export function initRoutePanel(config, isVoiceOn, loadEvents = api.listEvents) {
 }
 
 // ───────── 治理端 ─────────
-export function initAdminPanel(config) {
+export function initAdminPanel(config, hooks = {}) {
   const segName = Object.fromEntries(config.segments.map((s) => [s.id, s.name]));
   const catName = Object.fromEntries(config.categories.map((c) => [c.id, c.name]));
   const list = $('#admin-list');
@@ -152,9 +157,11 @@ export function initAdminPanel(config) {
     try {
       events = await api.listEvents();
     } catch (e) {
+      hooks.onEvents?.([]);
       list.innerHTML = `<p class="card">無法取得事件：${esc(e.message)}</p>`;
       return;
     }
+    hooks.onEvents?.(events);
     if (!events.length) {
       list.innerHTML = '<p class="card muted">目前沒有事件。到「鏡頭判斷」回報一筆試試看。</p>';
       return;
@@ -166,7 +173,7 @@ export function initAdminPanel(config) {
       const chip = st === 'expired'
         ? '<span class="chip expired">資訊已過期，路況待確認</span>'
         : `<span class="chip s-${esc(e.status)}">${esc(e.status)}</span>`;
-      return `<article class="card">
+      return `<article class="card" data-event-id="${esc(e.id)}" tabindex="-1">
         <h3>${esc(segName[e.segmentId] || e.segmentId)}　${chip}</h3>
         <p>${esc(catName[e.category] || e.category)}：${esc(e.summary || '')}</p>
         <p class="muted small">來源：${esc(SOURCE_TEXT[e.source] || e.source)}　觀測：${fmtTime(e.observedAt)}　有效至：${fmtTime(e.expiresAt)}</p>
