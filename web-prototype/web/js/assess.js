@@ -4,7 +4,7 @@
 // v0.1 簡化（畫面與報告都要標明）：
 //  - 只檢查「輪椅寬度＋兩側餘裕」的橫截面，尚未計入車身長度與轉彎掃過的範圍。
 //  - 每前進一格最多左右偏移一格（約 45°），屬於「緩轉候選」。
-//  - 障礙貼地位置來源：人工標註，或物件偵測框底邊近似（模型推估）。
+//  - 障礙貼地位置來自人工標註或已校正影格的地面接觸證據。
 
 import { groundToImage } from './homography.js';
 
@@ -41,6 +41,7 @@ export function buildGrid(opts) {
     range,
     cellCm = 5,
     freeImage = [],
+    sampleImage = null,
     blockedGround = [],
     unknownGround = [],
     unknownImage = [],
@@ -50,6 +51,7 @@ export function buildGrid(opts) {
   const rows = Math.floor((range.endCm - range.startCm) / cellCm);
   if (!(cols > 0 && rows > 0 && cols * rows <= 100_000)) return null;
   const cells = new Uint8Array(rows * cols);
+  const observedRows = sampleImage ? new Uint8Array(rows) : null;
   const imgW = calib?.imageSize?.width;
   const imgH = calib?.imageSize?.height;
 
@@ -61,8 +63,10 @@ export function buildGrid(opts) {
       const inFrame = ip && ip[0] >= 0 && ip[1] >= 0 && ip[0] < imgW && ip[1] < imgH;
       let s = FREE;
       if (calib) {
-        if (!inFrame || !freeImage.some((poly) => pointInPolygon(ip, poly)) ||
-            unknownImage.some((poly) => pointInPolygon(ip, poly))) {
+        if (sampleImage) {
+          s = inFrame ? sampleImage(ip) : UNKNOWN;
+        } else if (!inFrame || !freeImage.some((poly) => pointInPolygon(ip, poly)) ||
+                   unknownImage.some((poly) => pointInPolygon(ip, poly))) {
           s = UNKNOWN; // 沒有已確認地面，或視線被遮住
         }
       }
@@ -70,6 +74,7 @@ export function buildGrid(opts) {
           blockedGround.some((poly) => pointInPolygon([x, y], poly))) s = BLOCKED;
       else if (s === FREE && unknownGround.some((poly) => pointInPolygon([x, y], poly))) s = UNKNOWN;
       cells[r * cols + c] = s;
+      if (observedRows && s !== UNKNOWN) observedRows[r] = 1;
     }
   }
 
@@ -94,7 +99,7 @@ export function buildGrid(opts) {
     }
   }
 
-  return { rows, cols, cellCm, corridor, range, cells, hasEvidence: !calib || cells.some((cell) => cell !== UNKNOWN) };
+  return { rows, cols, cellCm, corridor, range, cells, observedRows, hasEvidence: !calib || cells.some((cell) => cell !== UNKNOWN) };
 }
 
 export function cellAt(grid, r, c) {
@@ -125,6 +130,7 @@ function fits(grid, r, c, halfCells, allowed) {
 /** 每一列中「非確定阻隔」的最長連續寬度；若某列連這個上限都不足，就是確定瓶頸 */
 export function findDefiniteBottleneck(grid, requiredCm) {
   for (let r = 0; r < grid.rows; r++) {
+    if (grid.observedRows && !grid.observedRows[r]) continue;
     let best = 0;
     let run = 0;
     for (let c = 0; c < grid.cols; c++) {
@@ -132,7 +138,7 @@ export function findDefiniteBottleneck(grid, requiredCm) {
       else best = Math.max(best, ++run);
     }
     // 格網取整：寬度上限多給一格，避免把取整誤差算成阻隔
-    const upperCm = (best + 1) * grid.cellCm;
+    const upperCm = (best + 1) * grid.cellCm + (grid.widthErrorCm ?? 0);
     if (upperCm < requiredCm) return { row: r, yCm: yOfRow(grid, r), maxGapCm: best * grid.cellCm };
   }
   return null;
@@ -211,6 +217,10 @@ export const REASON_TEXT = {
   OUTSIDE_CALIBRATION: '尚未完成地面校正，無法判斷',
   INVALID_PROFILE: '輪椅通行寬度必須大於零',
   NO_GROUND_EVIDENCE: '尚無可確認的地面或阻隔，請用暫停影片或照片標註',
+  LIVE_CALIBRATION_REQUIRED: '完成四點校正並確認量測條件後，才會自動判斷輪椅淨寬。',
+  LIVE_SCANNING: '已啟用 90 公分輪椅淨寬判斷，等待下一個掃描影格。',
+  LIVE_CONFIRMING_BLOCK: '偵測到可能受阻，正在用後續影格確認。',
+  LIVE_SCAN_FAILED: '目前沒有可用的掃描結果。請重新掃描。',
   STALE_FRAME: '畫面已過期',
 };
 

@@ -4,14 +4,15 @@ import { makeCalibration, imageToGround, groundToImage } from './homography.js';
 import {
   buildGrid, assess, cellAt,
   FREE, BLOCKED, UNKNOWN, STATUS_TEXT, REASON_TEXT,
-} from './assess.js';
+} from './assess.js?v=live-width-1';
 import { classifyConsent } from './intent.js';
 import * as api from './api.js';
 import * as voice from './voice.js';
 import * as detector from './detector.js';
 import { renderDemoScene, DEMO_SIZE } from './demo.js';
 import { initRoutePanel, initAdminPanel } from './panels.js';
-import { createSidewalkScanner } from './scan.js?v=painted-1';
+import { createSidewalkScanner } from './scan.js?v=live-width-1';
+import { assessLiveScan, updateLiveReport } from './live-scan.js?v=1';
 
 const $ = (s) => document.querySelector(s);
 const view = $('#view');
@@ -21,6 +22,8 @@ const bctx = bird.getContext('2d');
 const video = $('#video');
 const scanner = createSidewalkScanner({
   status: $('#scan-status'), preview: $('#scan-preview'), button: $('#scan-again'),
+  onResult: handleLiveScan,
+  onFailure: (source) => { if (source.kind === 'live') resetLiveAssessment('LIVE_SCAN_FAILED'); },
 });
 
 const state = {
@@ -46,6 +49,8 @@ const state = {
   pendingReport: null,
   lastAnalyzeAt: 0,
   dirty: true,
+  liveReport: null,
+  liveResetAt: 0,
 };
 
 // ───────── 小工具 ─────────
@@ -60,8 +65,9 @@ const markDirty = () => { state.dirty = true; };
 function params() {
   const rect = { widthCm: num('#p-rect-w', 120), lengthCm: num('#p-rect-l', 200), nearCm: num('#p-near', 50) };
   const profile = state.config?.profiles.find((p) => p.id === $('#profile').value) || { widthCm: 70, sideMarginCm: 10 };
-  const widthCm = num('#p-width', profile.widthCm);
-  const sideCm = num('#p-side', profile.sideMarginCm);
+  const live = state.source?.kind === 'live';
+  const widthCm = live ? 70 : num('#p-width', profile.widthCm);
+  const sideCm = live ? 10 : num('#p-side', profile.sideMarginCm);
   return {
     rect,
     corridor: { leftCm: -rect.widthCm / 2 - num('#p-edge-l', 0), rightCm: rect.widthCm / 2 + num('#p-edge-r', 0) },
@@ -98,6 +104,12 @@ function setSource(src) {
   $('#video-controls').hidden = src.kind !== 'video';
   state.calibPts = [];
   state.calib = null;
+  const live = src.kind === 'live';
+  $('#live-measure').hidden = !live;
+  if (live) $('#profile').value = 'manual';
+  for (const id of ['#profile', '#p-width', '#p-side']) $(id).disabled = live;
+  resetLiveAssessment();
+  updateThreshold();
   if (src.kind !== 'demo') setMode('calib');
   markDirty();
 }
@@ -192,6 +204,7 @@ function dropStaleAnnotations() {
 
 // ───────── 校正 ─────────
 function rebuildCalibration() {
+  resetLiveAssessment();
   if (!state.source || state.calibPts.length !== 4) { state.calib = null; return; }
   const p = params();
   state.calib = makeCalibration(state.calibPts, p.rect, { width: state.source.width, height: state.source.height });
@@ -200,6 +213,7 @@ function rebuildCalibration() {
 }
 
 $('#reset-calib').addEventListener('click', () => {
+  resetLiveAssessment();
   state.calibPts = [];
   state.calib = null;
   setMode('calib');
@@ -208,7 +222,7 @@ $('#reset-calib').addEventListener('click', () => {
 
 for (const id of ['#p-rect-w', '#p-rect-l', '#p-near']) $(id).addEventListener('input', () => rebuildCalibration());
 for (const id of ['#p-edge-l', '#p-edge-r', '#p-range', '#p-start-x', '#p-cell', '#p-margin', '#p-width', '#p-side']) {
-  $(id).addEventListener('input', () => { updateThreshold(); markDirty(); });
+  $(id).addEventListener('input', () => { resetLiveAssessment(); updateThreshold(); markDirty(); });
 }
 $('#profile').addEventListener('change', () => { updateThreshold(); markDirty(); });
 
@@ -235,7 +249,7 @@ function setMode(mode) {
 document.querySelectorAll('.modes button').forEach((b) => b.addEventListener('click', () => {
   if (b.dataset.mode === 'calib') state.calibPts = [];
   setMode(b.dataset.mode);
-  if (b.dataset.mode === 'calib') { state.calib = null; markDirty(); }
+  if (b.dataset.mode === 'calib') { state.calib = null; resetLiveAssessment(); markDirty(); }
 }));
 
 function clearAnnotations(withDirty = true) {
@@ -299,7 +313,57 @@ view.addEventListener('pointerdown', (e) => {
 });
 
 // ───────── 判斷 ─────────
+function showLiveResult(grid, result) {
+  state.grid = grid;
+  state.result = result;
+  showResult(result, '鏡頭掃描＋地面校正');
+  $('#live-status').textContent = `輪椅判斷：${STATUS_TEXT[result.status]}。 ${$('#reason').textContent}`;
+  drawBird();
+}
+
+function resetLiveAssessment(reason = 'LIVE_CALIBRATION_REQUIRED') {
+  state.liveResetAt = performance.now();
+  state.liveReport = null;
+  if (reason === 'LIVE_CALIBRATION_REQUIRED') $('#live-confirm').checked = false;
+  if (state.source?.kind !== 'live') return;
+  if (state.dialog) closeDialog();
+  showLiveResult(null, { status: 'UNKNOWN', reason });
+}
+
+$('#live-calibrate').addEventListener('click', () => {
+  const settings = $('#calibration-settings');
+  settings.open = true;
+  $('#p-rect-w').focus();
+});
+
+$('#live-confirm').addEventListener('change', () => {
+  if ($('#live-confirm').checked && !state.calib) {
+    resetLiveAssessment();
+    notice('請先完成四點地面校正。');
+    return;
+  }
+  resetLiveAssessment($('#live-confirm').checked ? 'LIVE_SCANNING' : 'LIVE_CALIBRATION_REQUIRED');
+});
+
+function handleLiveScan(scan) {
+  if (scan.source.kind !== 'live' || scan.source !== state.source ||
+      scan.capturedAt < state.liveResetAt || !state.calib || !$('#live-confirm').checked) return;
+  const { grid, result, obstacle } = assessLiveScan(scan, state.calib, params());
+  state.liveReport = updateLiveReport(state.liveReport, result.status);
+  if (result.status === 'BLOCKED' && state.liveReport.blocked < 3) {
+    showLiveResult(grid, { status: 'UNKNOWN', reason: 'LIVE_CONFIRMING_BLOCK' });
+    return;
+  }
+  showLiveResult(grid, result);
+  if (state.liveReport.clear >= 2 && state.dialog) closeDialog();
+  if (state.liveReport.shouldPrompt) {
+    const lab = { label: obstacle?.label, category: obstacle?.category ?? 'other', origin: 'model' };
+    void askReport(lab);
+  }
+}
+
 function analyze() {
+  if (state.source?.kind === 'live') return;
   const p = params();
   const calib = state.calib;
   let r;
@@ -388,7 +452,7 @@ function nearestLabel(labels, y) {
 // ───────── 詢問回報（語音只在提問後聆聽一次） ─────────
 async function askReport(lab) {
   if (state.dialog) return;
-  const q = `前方有${lab.label}，通行空間不足。要回報這個路段嗎？`;
+  const q = (lab.label ? `前方有${lab.label}，通行空間不足。` : '前方輪椅通行空間不足。') + '要回報這個路段嗎？';
   const dialog = { lab };
   state.dialog = dialog;
   $('#consent').hidden = false;
@@ -434,7 +498,7 @@ function confirmReport(how) {
   submitReport({
     category: lab.category,
     source,
-    summary: `${lab.label}縮窄通道，通行空間不足（${how}；${source === 'auto' ? '模型推估' : '人工標註'}）`,
+    summary: `${lab.label ? lab.label + '縮窄通道，' : ''}輪椅通行空間不足（${how}；${source === 'auto' ? '鏡頭與地面校正推估' : '人工標註'}）`,
   });
 }
 
@@ -685,7 +749,7 @@ function loop(now) {
       lastDetRun = now;
       runDetection();
     }
-    if (dyn ? now - state.lastAnalyzeAt > 200 : state.dirty) {
+    if (s.kind !== 'live' && (dyn ? now - state.lastAnalyzeAt > 200 : state.dirty)) {
       state.lastAnalyzeAt = now;
       state.dirty = false;
       analyze();

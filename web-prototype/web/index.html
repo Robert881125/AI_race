@@ -8,7 +8,7 @@
 </head>
 <body>
 <header class="top">
-  <div class="brand"><strong>無礙智瞳</strong><span class="ver">網頁原型 v0.2.1</span></div>
+  <div class="brand"><strong>無礙智瞳</strong><span class="ver">網頁原型 v0.2.2</span></div>
   <nav class="tabs" role="tablist" aria-label="功能">
     <button role="tab" id="tab-btn-camera" aria-controls="tab-camera" aria-selected="true">鏡頭判斷</button>
     <button role="tab" id="tab-btn-route" aria-controls="tab-route" aria-selected="false">路線提醒</button>
@@ -47,6 +47,12 @@
       </div>
       <p id="scan-status" role="status">選擇照片、影片或開啟鏡頭後會自動掃描。</p>
       <canvas id="scan-preview" aria-label="最近掃描的影格，綠色是辨識到的人行道，黃色是疑似人行標線" hidden></canvas>
+      <div id="live-measure" hidden>
+        <p id="live-status" role="status"></p>
+        <p>即時通行判斷使用 90 公分。先停下並固定鏡頭，輸入校正矩形的實際尺寸，再在鏡頭畫面依序點四角。</p>
+        <button type="button" id="live-calibrate">開啟校正設定</button>
+        <label><input type="checkbox" id="live-confirm"> 我已確認矩形橫跨整個人行道，且鏡頭固定在同一平坦路面上</label>
+      </div>
     </section>
 
     <div class="stage-wrap">
@@ -124,7 +130,7 @@
     <p id="report-msg" class="report-msg" aria-live="polite"></p>
     <button type="button" id="retry" hidden>重新送出</button>
 
-    <details class="params">
+    <details class="params" id="calibration-settings">
       <summary>校正與參數（團隊試跑用）</summary>
       <p class="muted small">地面校正：在地上用膠帶貼一個量好的矩形，切到「地面校正」後依序點【近左、近右、遠右、遠左】四角。</p>
       <div class="param-grid">
@@ -172,6 +178,6 @@
 </footer>
 
 <video id="video" class="offscreen" playsinline muted></video>
-<script type="module" src="js/app.js?v=painted-1"></script>
+<script type="module" src="js/app.js?v=live-width-1"></script>
 </body>
 </html>

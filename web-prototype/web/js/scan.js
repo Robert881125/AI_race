@@ -98,7 +98,7 @@ function loadModel() {
   return loading;
 }
 
-export function createSidewalkScanner({ status, preview, button }) {
+export function createSidewalkScanner({ status, preview, button, onResult, onFailure }) {
   let source = null;
   let busy = false;
   let failed = false;
@@ -128,6 +128,7 @@ export function createSidewalkScanner({ status, preview, button }) {
     if (frame === lastFrame) return;
     busy = true;
     lastFrame = frame;
+    const capturedAt = performance.now();
     try {
       const scale = Math.min(1, 512 / Math.max(current.width, current.height));
       snapshot.width = Math.max(1, Math.round(current.width * scale));
@@ -163,13 +164,16 @@ export function createSidewalkScanner({ status, preview, button }) {
         : sidewalk ? '已標示可見的人行道（綠色）。' : '此影格沒有足夠的人行道辨識證據。';
       const obstacles = possibleObstacles.length ? `疑似靠近人行道的物體：${possibleObstacles.join('、')}。` : '';
       const time = current.kind === 'video' ? `影片 ${frame.toFixed(1)} 秒。\n` : '';
-      status.textContent = `掃描完成。${time}${scene}${obstacles} 通行淨寬待確認。`;
+      const widthHint = current.kind === 'live' ? '' : ' 通行淨寬待確認。';
+      status.textContent = `掃描完成。${time}${scene}${obstacles}${widthHint}`;
+      onResult?.({ labels, sidewalk, painted, capturedAt, snapshot, source: current });
     } catch (error) {
       if (source !== current) return;
       failed = true;
       preview.hidden = true;
       status.textContent = '人行道掃描失敗。請檢查網路及瀏覽器，再按「重新掃描」。';
       console.warn('Sidewalk scan failed', error);
+      onFailure?.(current);
     } finally {
       busy = false;
       if (source === current) nextScanAt = performance.now() + 1500;
