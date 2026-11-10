@@ -1,10 +1,10 @@
 // 無礙智瞳 網頁原型 v0.1 主程式（使用者 A：鏡頭判斷＋回報）
 
-import { makeCalibration, imageToGround, groundToImage } from './homography.js';
+import { makeCalibration, imageToGround, groundToImage } from './homography.js?v=review-1';
 import {
   buildGrid, assess, cellAt,
   FREE, BLOCKED, UNKNOWN, STATUS_TEXT, REASON_TEXT,
-} from './assess.js?v=live-width-1';
+} from './assess.js?v=review-1';
 import { classifyConsent } from './intent.js';
 import * as api from './api.js';
 import * as voice from './voice.js';
@@ -12,7 +12,7 @@ import * as detector from './detector.js';
 import { renderDemoScene, DEMO_SIZE } from './demo.js';
 import { initRoutePanel, initAdminPanel } from './panels.js';
 import { createSidewalkScanner } from './scan.js?v=live-width-1';
-import { assessLiveScan, updateLiveReport } from './live-scan.js?v=1';
+import { assessLiveScan, updateLiveReport } from './live-scan.js?v=review-1';
 
 const $ = (s) => document.querySelector(s);
 const view = $('#view');
@@ -47,6 +47,7 @@ const state = {
   lastAlertAt: 0,
   dialog: null,
   pendingReport: null,
+  sendingReport: false,
   lastAnalyzeAt: 0,
   dirty: true,
   liveReport: null,
@@ -208,7 +209,7 @@ function rebuildCalibration() {
   if (!state.source || state.calibPts.length !== 4) { state.calib = null; return; }
   const p = params();
   state.calib = makeCalibration(state.calibPts, p.rect, { width: state.source.width, height: state.source.height });
-  if (!state.calib) notice('校正失敗：四個點不能重複或共線，請重新校正。');
+  if (!state.calib) notice('校正失敗：請確認實際尺寸，並依近左、近右、遠右、遠左重點四角。');
   markDirty();
 }
 
@@ -357,6 +358,10 @@ function handleLiveScan(scan) {
   showLiveResult(grid, result);
   if (state.liveReport.clear >= 2 && state.dialog) closeDialog();
   if (state.liveReport.shouldPrompt) {
+    if (state.pendingReport) {
+      state.liveReport.prompted = false;
+      return;
+    }
     const lab = { label: obstacle?.label, category: obstacle?.category ?? 'other', origin: 'model' };
     void askReport(lab);
   }
@@ -451,7 +456,7 @@ function nearestLabel(labels, y) {
 
 // ───────── 詢問回報（語音只在提問後聆聽一次） ─────────
 async function askReport(lab) {
-  if (state.dialog) return;
+  if (state.dialog || state.pendingReport) return;
   const q = (lab.label ? `前方有${lab.label}，通行空間不足。` : '前方輪椅通行空間不足。') + '要回報這個路段嗎？';
   const dialog = { lab };
   state.dialog = dialog;
@@ -524,6 +529,7 @@ const CAT_WORDS = [
 ];
 
 $('#manual').addEventListener('click', async () => {
+  if (state.pendingReport) { notice('請先完成或結束上一筆回報。'); return; }
   $('#manual-panel').hidden = false;
   $('#manual-hint').textContent = '';
   if (voiceOn()) {
@@ -553,6 +559,7 @@ function manualReport(cat, how) {
 
 // ───────── 送出回報（同一筆重送只建立一筆） ─────────
 async function submitReport({ category, source, summary }) {
+  if (state.pendingReport) { notice('請先完成或結束上一筆回報。'); return; }
   const ev = {
     id: api.newId(),
     segmentId: $('#segment').value,
@@ -567,8 +574,10 @@ async function submitReport({ category, source, summary }) {
 
 async function sendPending() {
   const ev = state.pendingReport;
-  if (!ev) return;
+  if (!ev || state.sendingReport) return;
+  state.sendingReport = true;
   $('#retry').hidden = true;
+  $('#discard-report').hidden = true;
   $('#report-msg').textContent = '送出中…';
   try {
     const saved = await api.createEvent(ev);
@@ -579,10 +588,20 @@ async function sendPending() {
   } catch (e) {
     $('#report-msg').textContent = `送出失敗：${e.message}。可以按「重新送出」（不會重複建立）。`;
     $('#retry').hidden = false;
+    $('#discard-report').hidden = false;
     if (voiceOn()) voice.say('回報沒有送出，請按重新送出。');
+  } finally {
+    state.sendingReport = false;
   }
 }
 $('#retry').addEventListener('click', sendPending);
+$('#discard-report').addEventListener('click', () => {
+  if (state.sendingReport || !state.pendingReport) return;
+  state.pendingReport = null;
+  $('#retry').hidden = true;
+  $('#discard-report').hidden = true;
+  notice('已結束這筆待送回報。');
+});
 
 // ───────── 自動偵測 ─────────
 $('#auto-on').addEventListener('change', async (e) => {

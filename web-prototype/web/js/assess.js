@@ -22,6 +22,27 @@ export function pointInPolygon([x, y], poly) {
   return inside;
 }
 
+function segmentTouchesCell(a, b, x, y, half) {
+  let enter = 0;
+  let exit = 1;
+  const center = [x, y];
+  for (let axis = 0; axis < 2; axis++) {
+    const low = center[axis] - half;
+    const high = center[axis] + half;
+    const delta = b[axis] - a[axis];
+    if (!delta) {
+      if (a[axis] < low || a[axis] > high) return false;
+      continue;
+    }
+    const first = (low - a[axis]) / delta;
+    const second = (high - a[axis]) / delta;
+    enter = Math.max(enter, Math.min(first, second));
+    exit = Math.min(exit, Math.max(first, second));
+    if (enter > exit) return false;
+  }
+  return true;
+}
+
 /**
  * 建立地面格網。
  * opts:
@@ -72,7 +93,11 @@ export function buildGrid(opts) {
       }
       if ((!calib || inFrame) &&
           blockedGround.some((poly) => pointInPolygon([x, y], poly))) s = BLOCKED;
-      else if (s === FREE && unknownGround.some((poly) => pointInPolygon([x, y], poly))) s = UNKNOWN;
+      else if (s === FREE && (
+        blockedGround.some((poly) => poly.some((point, i) =>
+          segmentTouchesCell(point, poly[(i + 1) % poly.length], x, y, cellCm / 2))) ||
+        unknownGround.some((poly) => pointInPolygon([x, y], poly))
+      )) s = UNKNOWN; // 有碰到障礙邊界，整格不能當作可用
       cells[r * cols + c] = s;
       if (observedRows && s !== UNKNOWN) observedRows[r] = 1;
     }

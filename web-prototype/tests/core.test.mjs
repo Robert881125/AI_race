@@ -66,6 +66,19 @@ test('沒有校正 → 無法確認', () => {
 });
 
 // ── 校正：影像 ↔ 地面 ──
+test('橫跨通道的薄障礙落在採樣列之間也不會產生候選動線', () => {
+  const grid = buildGrid({ ...base, blockedGround: [rect(-100, 100, 49, 51)] });
+  assert.notEqual(assess(grid, wheelchair).status, 'CANDIDATE');
+});
+
+test('四點交叉或尺寸無效時拒絕校正', () => {
+  const size = { width: 1280, height: 720 };
+  const measure = { widthCm: 120, lengthCm: 200, nearCm: 50 };
+  assert.equal(makeCalibration([[300, 680], [980, 680], [480, 300], [800, 300]], measure, size), null);
+  assert.equal(makeCalibration([[100, 600], [1100, 600], [100, 200], [1100, 200]], measure, size), null);
+  assert.equal(makeCalibration([[300, 680], [980, 680], [800, 300], [480, 300]], { ...measure, lengthCm: 0 }, size), null);
+});
+
 test('四點校正可來回換算', () => {
   const img = [[300, 900], [980, 900], [800, 500], [480, 500]];
   const calib = makeCalibration(img, { widthCm: 120, lengthCm: 200, nearCm: 50 }, { width: 1280, height: 960 });

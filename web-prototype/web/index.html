@@ -8,7 +8,7 @@
 </head>
 <body>
 <header class="top">
-  <div class="brand"><strong>無礙智瞳</strong><span class="ver">網頁原型 v0.2.2</span></div>
+  <div class="brand"><strong>無礙智瞳</strong><span class="ver">網頁原型 v0.2.3</span></div>
   <nav class="tabs" role="tablist" aria-label="功能">
     <button role="tab" id="tab-btn-camera" aria-controls="tab-camera" aria-selected="true">鏡頭判斷</button>
     <button role="tab" id="tab-btn-route" aria-controls="tab-route" aria-selected="false">路線提醒</button>
@@ -129,6 +129,7 @@
 
     <p id="report-msg" class="report-msg" aria-live="polite"></p>
     <button type="button" id="retry" hidden>重新送出</button>
+    <button type="button" id="discard-report" hidden>結束這筆回報</button>
 
     <details class="params" id="calibration-settings">
       <summary>校正與參數（團隊試跑用）</summary>
@@ -178,6 +179,6 @@
 </footer>
 
 <video id="video" class="offscreen" playsinline muted></video>
-<script type="module" src="js/app.js?v=live-width-1"></script>
+<script type="module" src="js/app.js?v=review-1"></script>
 </body>
 </html>

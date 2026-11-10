@@ -75,6 +75,16 @@ export function applyH(H, [x, y]) {
  */
 export function makeCalibration(imagePts, rect, imageSize) {
   const { widthCm: W, lengthCm: L, nearCm: d0 } = rect;
+  if (![W, L, d0].every(Number.isFinite) || W <= 0 || L <= 0 || d0 < 0 ||
+      imagePts.length !== 4 || !imagePts.every(([x, y]) =>
+        Number.isFinite(x) && Number.isFinite(y) && x >= 0 && y >= 0 &&
+        x <= imageSize.width && y <= imageSize.height)) return null;
+  const turns = imagePts.map(([ax, ay], i) => {
+    const [bx, by] = imagePts[(i + 1) % 4];
+    const [cx, cy] = imagePts[(i + 2) % 4];
+    return (bx - ax) * (cy - by) - (by - ay) * (cx - bx);
+  });
+  if (!turns.every((turn) => turn > 0) && !turns.every((turn) => turn < 0)) return null;
   const groundPts = [
     [-W / 2, d0],
     [W / 2, d0],
@@ -88,7 +98,9 @@ export function makeCalibration(imagePts, rect, imageSize) {
   // 以矩形中心為參考，記下「地面這一側」的 w 正負號
   const center = [0, d0 + L / 2];
   const ref = applyH(groundToImg, center);
+  if (!ref) return null;
   const centerImg = applyH(imgToGround, ref.p);
+  if (!centerImg) return null;
   return {
     imagePts,
     rect: { ...rect },

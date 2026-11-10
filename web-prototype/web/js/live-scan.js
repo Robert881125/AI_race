@@ -1,4 +1,4 @@
-import { assess, buildGrid, FREE, BLOCKED, UNKNOWN } from './assess.js?v=live-width-1';
+import { assess, buildGrid, FREE, BLOCKED, UNKNOWN } from './assess.js?v=review-1';
 
 const staticObstacles = new Map([
   ['bicycle', { label: '自行車', category: 'bicycle' }],
