@@ -78,7 +78,14 @@ export function summarizeScan(segments, pixels, nearOnly = false) {
   return { sidewalk, possibleObstacles, painted };
 }
 
-export function createSidewalkScanner({ status, preview, button, getCalibration, captureEvidence, onResult, onFailure }) {
+export function canDrawScanMask(scan, source) {
+  if (!scan?.layer) return false;
+  if (source.kind === 'image') return true;
+  return source.kind === 'video' && source.el.paused && !source.el.seeking &&
+    Math.abs(source.el.currentTime - scan.frame) < 0.05;
+}
+
+export function createSidewalkScanner({ status, preview, button, details, getCalibration, captureEvidence, onResult, onFailure }) {
   let worker = null;
   let modelReady = false;
   function segment(pixels) {
@@ -104,12 +111,17 @@ export function createSidewalkScanner({ status, preview, button, getCalibration,
   let lastFrame = null;
   let generation = 0;
   let lastCalibration = null;
+  let activeRegion = null;
+  let recent = null;
   const snapshot = document.createElement('canvas');
   const ctx = snapshot.getContext('2d', { willReadFrequently: true });
 
   function setSource(next) {
     source = next?.kind === 'demo' ? null : next;
     lastCalibration = null;
+    activeRegion = source ? scanRegion(source, null) : null;
+    details.hidden = true;
+    details.open = false;
     reset();
     button.disabled = !source;
     if (!source) status.textContent = next
@@ -121,8 +133,27 @@ export function createSidewalkScanner({ status, preview, button, getCalibration,
     failed = false;
     nextScanAt = 0;
     lastFrame = null;
+    recent = null;
     preview.hidden = true;
     if (source) status.textContent = '準備掃描人行道，首次使用需要下載模型。';
+  }
+
+  function drawOverlay(context, scale) {
+    if (!source) return;
+    if (canDrawScanMask(recent, source)) {
+      const { x, y, width, height } = recent.region;
+      context.drawImage(recent.layer, x, y, width, height);
+    }
+    if (source.kind === 'image' || !activeRegion) return;
+    const { x, y, width, height } = activeRegion;
+    context.save();
+    context.strokeStyle = '#10202b';
+    context.lineWidth = 7 * scale;
+    context.strokeRect(x, y, width, height);
+    context.strokeStyle = '#40e0ff';
+    context.lineWidth = 4 * scale;
+    context.strokeRect(x, y, width, height);
+    context.restore();
   }
 
   async function tick(now) {
@@ -132,6 +163,7 @@ export function createSidewalkScanner({ status, preview, button, getCalibration,
     const calibration = isVideo ? getCalibration?.() ?? null : null;
     if (calibration !== lastCalibration) {
       lastCalibration = calibration;
+      activeRegion = scanRegion(current, calibration);
       reset();
     }
     if (busy || failed || now < nextScanAt) return;
@@ -139,7 +171,7 @@ export function createSidewalkScanner({ status, preview, button, getCalibration,
     const frame = isVideo ? current.el.currentTime : 0;
     if (frame === lastFrame) return;
     lastFrame = frame;
-    const region = scanRegion(current, calibration);
+    const region = activeRegion;
     if (!region) {
       status.textContent = '校正範圍沒有落在前方 4 公尺內的可見路面，請重做地面校正。';
       return;
@@ -151,7 +183,7 @@ export function createSidewalkScanner({ status, preview, button, getCalibration,
       drawScanRegion(snapshot, ctx, current.el, region);
       const pixels = ctx.getImageData(0, 0, snapshot.width, snapshot.height);
       const evidence = captureEvidence?.(current);
-      status.textContent = modelReady ? '正在掃描人行道…' : '正在載入模型並掃描人行道…';
+      if (preview.hidden) status.textContent = modelReady ? '正在掃描人行道…' : '正在載入模型並掃描人行道…';
       const labels = await segment(pixels);
       modelReady = true;
       if (request !== generation || (isVideo && current.el.seeking)) return;
@@ -160,8 +192,9 @@ export function createSidewalkScanner({ status, preview, button, getCalibration,
       preview.height = snapshot.height;
       const output = preview.getContext('2d');
       output.drawImage(snapshot, 0, 0);
+      let layer = null;
       if (sidewalk) {
-        const layer = document.createElement('canvas');
+        layer = document.createElement('canvas');
         layer.width = sidewalk.width;
         layer.height = sidewalk.height;
         const layerContext = layer.getContext('2d');
@@ -173,12 +206,14 @@ export function createSidewalkScanner({ status, preview, button, getCalibration,
         layerContext.putImageData(image, 0, 0);
         output.drawImage(layer, 0, 0, preview.width, preview.height);
       }
+      recent = { frame, layer, region };
       preview.hidden = false;
+      details.hidden = false;
       const scene = painted ? '已標示疑似藍綠色人行標線區（黃色），路面用途待確認。'
-        : sidewalk ? '已標示可見的人行道（綠色）。' : '此影格沒有足夠的人行道辨識證據。';
+        : sidewalk ? '已標示可見的人行道（綠色）。' : '這一格未辨識到足夠的人行道特徵，通行狀態待確認。';
       const obstacles = possibleObstacles.length ? `疑似靠近人行道的物體：${possibleObstacles.join('、')}。` : '';
       const time = current.kind === 'video' ? `影片 ${frame.toFixed(1)} 秒。\n` : '';
-      const widthHint = current.kind === 'live' ? '' : ' 通行淨寬待確認。';
+      const widthHint = current.kind === 'live' || !sidewalk ? '' : ' 通行淨寬待確認。';
       const scope = !isVideo ? '' : region.endCm === null
         ? '範圍：畫面近端（尚未校正距離）。'
         : '範圍：校正區內，最遠前方 ' + (region.endCm / 100).toFixed(1) + ' 公尺。';
@@ -187,6 +222,7 @@ export function createSidewalkScanner({ status, preview, button, getCalibration,
     } catch (error) {
       if (request !== generation) return;
       failed = true;
+      recent = null;
       preview.hidden = true;
       status.textContent = '人行道掃描失敗。請檢查網路及瀏覽器，再按「重新掃描」。';
       console.warn('Sidewalk scan failed', error);
@@ -201,5 +237,5 @@ export function createSidewalkScanner({ status, preview, button, getCalibration,
     reset();
     void tick(performance.now());
   });
-  return { setSource, reset, tick };
+  return { setSource, reset, tick, drawOverlay };
 }

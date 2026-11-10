@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>無礙智瞳 原型</title>
-  <link rel="stylesheet" href="css/style.css?v=video-1">
+  <link rel="stylesheet" href="css/style.css?v=visible-1">
 </head>
 <body>
 <header class="top">
-  <div class="brand"><strong>無礙智瞳</strong><span class="ver">網頁原型 v0.3.1</span></div>
+  <div class="brand"><strong>無礙智瞳</strong><span class="ver">網頁原型 v0.3.2</span></div>
   <nav class="tabs" role="tablist" aria-label="功能">
     <button role="tab" id="tab-btn-camera" aria-controls="tab-camera" aria-selected="true">鏡頭判斷</button>
     <button role="tab" id="tab-btn-route" aria-controls="tab-route" aria-selected="false">路線提醒</button>
@@ -40,27 +40,6 @@
       </label>
     </div>
 
-    <section class="scan-panel" aria-labelledby="scan-heading">
-      <div class="row scan-heading">
-        <strong id="scan-heading">自動掃描人行道</strong>
-        <button type="button" id="scan-again" disabled>重新掃描</button>
-      </div>
-      <p class="muted small">影片和鏡頭只掃描近端路面。地面校正後，最遠掃到前方 4 公尺。</p>
-      <p id="scan-status" role="status">選擇照片、影片或開啟鏡頭後會自動掃描。</p>
-      <canvas id="scan-preview" aria-label="最近掃描的影格，綠色是辨識到的人行道，黃色是疑似人行標線" hidden></canvas>
-      <div id="live-measure" hidden>
-        <p id="live-status" role="status"></p>
-        <p>即時通行判斷使用 90 公分。先停下並固定鏡頭，輸入校正矩形的實際尺寸，再在鏡頭畫面依序點四角。</p>
-        <button type="button" id="live-calibrate">開啟校正設定</button>
-        <label><input type="checkbox" id="live-confirm"> 我已確認矩形橫跨整個人行道，且鏡頭固定在同一平坦路面上</label>
-      </div>
-    </section>
-
-    <div class="stage-wrap">
-      <canvas id="view" width="960" height="720" aria-label="鏡頭畫面與判斷疊圖"></canvas>
-      <p id="stage-hint" class="stage-hint">請先選擇影片、照片、開啟鏡頭，或使用示範畫面</p>
-    </div>
-
     <div id="video-controls" hidden>
       <label class="field">影片進度
         <input id="video-timeline" type="range" min="0" max="0" step="any" value="0" aria-describedby="time">
@@ -89,6 +68,32 @@
       </form>
       <p id="video-control-msg" class="muted small" role="status"></p>
     </div>
+
+    <section class="scan-panel" aria-labelledby="scan-heading">
+      <div class="row scan-heading">
+        <strong id="scan-heading">自動掃描人行道</strong>
+        <button type="button" id="scan-again" disabled>重新掃描</button>
+      </div>
+      <p class="muted small">影片和即時鏡頭的藍框標示掃描範圍，校正後最遠掃到前方 4 公尺。綠色是辨識到的人行道，黃色是疑似人行標線。影片暫停後可在主畫面查看同一影格的色塊。</p>
+      <p id="scan-status" role="status">選擇照片、影片或開啟鏡頭後會自動掃描。</p>
+      <div id="live-measure" hidden>
+        <p id="live-status" role="status"></p>
+        <p>即時通行判斷使用 90 公分。先停下並固定鏡頭，輸入校正矩形的實際尺寸，再在鏡頭畫面依序點四角。</p>
+        <button type="button" id="live-calibrate">開啟校正設定</button>
+        <label><input type="checkbox" id="live-confirm"> 我已確認矩形橫跨整個人行道，且鏡頭固定在同一平坦路面上</label>
+      </div>
+    </section>
+
+    <div class="stage-wrap">
+      <canvas id="view" width="960" height="720" aria-label="鏡頭畫面與判斷疊圖"></canvas>
+      <p id="stage-hint" class="stage-hint">請先選擇影片、照片、開啟鏡頭，或使用示範畫面</p>
+    </div>
+
+    <details id="scan-details" class="scan-details" hidden>
+      <summary>查看最近一次掃描影格</summary>
+      <canvas id="scan-preview" aria-label="最近掃描的影格，綠色是辨識到的人行道，黃色是疑似人行標線" hidden></canvas>
+      <p class="scan-preview-empty muted small">等待目前影格的掃描結果。</p>
+    </details>
 
     <div class="modes" role="group" aria-label="畫面操作模式">
       <button type="button" data-mode="view" aria-pressed="true">檢視</button>
@@ -206,6 +211,6 @@
 </footer>
 
 <video id="video" class="offscreen" playsinline muted></video>
-<script type="module" src="js/app.js?v=video-1"></script>
+<script type="module" src="js/app.js?v=visible-1"></script>
 </body>
 </html>

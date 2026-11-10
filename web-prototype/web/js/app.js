@@ -12,7 +12,7 @@ import * as detector from './detector.js';
 import { renderDemoScene, DEMO_SIZE } from './demo.js';
 import { initRoutePanel, initAdminPanel } from './panels.js?v=map-1';
 import { createMap } from './map.js?v=map-1';
-import { createSidewalkScanner } from './scan.js?v=video-1';
+import { createSidewalkScanner } from './scan.js?v=visible-1';
 import { bindVideoControls } from './video-controls.js?v=video-1';
 import { NEAR_LIMIT_CM, drawScanRegion, scanRegion } from './scan-region.js?v=video-1';
 import { assessLiveScan, updateLiveReport } from './live-scan.js?v=video-1';
@@ -25,6 +25,7 @@ const bctx = bird.getContext('2d');
 const video = $('#video');
 const scanner = createSidewalkScanner({
   status: $('#scan-status'), preview: $('#scan-preview'), button: $('#scan-again'),
+  details: $('#scan-details'),
   getCalibration: () => state.calib,
   onResult: handleLiveScan,
   onFailure: (source) => { if (source.kind === 'live') resetLiveAssessment('LIVE_SCAN_FAILED'); },
@@ -692,6 +693,7 @@ function drawView() {
   if (!s) return;
   const k = s.width / 960; // 線寬隨解析度縮放
   try { vctx.drawImage(s.el, 0, 0, s.width, s.height); } catch { return; }
+  scanner.drawOverlay(vctx, k);
   const p = params();
   const c = state.calib;
 
