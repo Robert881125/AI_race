@@ -6,12 +6,56 @@ const obstacleNames = new Map([
   ['car', '汽車'], ['truck', '貨車'], ['bus', '公車'],
 ]);
 
-export function summarizeScan(segments) {
-  const sidewalk = segments.find(({ label }) => label === 'sidewalk')?.mask;
-  if (!sidewalk) return { sidewalk: null, possibleObstacles: [] };
+function findPaintedLane(pixels, road) {
+  if (!pixels || !road || road.width !== pixels.width || road.height !== pixels.height) return null;
+  const { width, height, data } = pixels;
+  const candidate = new Uint8Array(width * height);
+  for (let i = Math.floor(height * 0.33) * width; i < candidate.length; i++) {
+    if (!road.data[i]) continue;
+    const [r, g, b] = [data[i * 4], data[i * 4 + 1], data[i * 4 + 2]];
+    if (g > r + 14 && b > r + 12 && Math.abs(g - b) < (g + b) * 0.18) candidate[i] = 1;
+  }
+  const queue = new Int32Array(candidate.length);
+  let largest = Math.max(4, width * height * 0.015);
+  let result = null;
+  // 只採用連到畫面近端、由下往前延伸的連續塗色區。
+  for (let y = Math.floor(height * 0.85); y < height; y++) {
+    for (let x = Math.floor(width * 0.25); x < width * 0.75; x++) {
+      const seed = y * width + x;
+      if (!candidate[seed]) continue;
+      let end = 1;
+      let minRow = y;
+      queue[0] = seed;
+      candidate[seed] = 0;
+      for (let start = 0; start < end; start++) {
+        const i = queue[start];
+        const col = i % width;
+        minRow = Math.min(minRow, Math.floor(i / width));
+        const neighbors = [i - width, i + width];
+        if (col > 0) neighbors.push(i - 1);
+        if (col < width - 1) neighbors.push(i + 1);
+        for (const j of neighbors) {
+          if (!candidate[j]) continue;
+          candidate[j] = 0;
+          queue[end++] = j;
+        }
+      }
+      if (minRow >= height * 0.72 || end < largest) continue;
+      largest = end;
+      result = new Uint8Array(candidate.length);
+      for (let j = 0; j < end; j++) result[queue[j]] = 255;
+    }
+  }
+  return result ? { width, height, data: result } : null;
+}
+
+export function summarizeScan(segments, pixels) {
+  let sidewalk = segments.find(({ label }) => label === 'sidewalk')?.mask;
+  const area = sidewalk?.data.reduce((count, pixel) => count + (pixel > 0), 0) ?? 0;
+  const painted = !sidewalk || area < Math.max(4, sidewalk.width * sidewalk.height * 0.0025);
+  if (painted) sidewalk = findPaintedLane(pixels, segments.find(({ label }) => label === 'road')?.mask);
+  if (!sidewalk) return { sidewalk: null, possibleObstacles: [], painted: false };
   const { width, height, data } = sidewalk;
-  const area = data.reduce((count, pixel) => count + (pixel > 0), 0);
-  if (area < Math.max(4, width * height * 0.0025)) return { sidewalk: null, possibleObstacles: [] };
 
   const possibleObstacles = segments.filter(({ label, mask }) => {
     if (!obstacleNames.has(label) || mask.width !== width || mask.height !== height) return false;
@@ -32,7 +76,7 @@ export function summarizeScan(segments) {
     }
     return false;
   }).map(({ label }) => obstacleNames.get(label));
-  return { sidewalk, possibleObstacles };
+  return { sidewalk, possibleObstacles, painted };
 }
 
 let loading;
@@ -96,7 +140,7 @@ export function createSidewalkScanner({ status, preview, button }) {
       status.textContent = '正在掃描人行道…';
       const labels = await segment(new RawImage(pixels.data, pixels.width, pixels.height, 4));
       if (source !== current) return;
-      const { sidewalk, possibleObstacles } = summarizeScan(labels);
+      const { sidewalk, possibleObstacles, painted } = summarizeScan(labels, pixels);
       preview.width = snapshot.width;
       preview.height = snapshot.height;
       const output = preview.getContext('2d');
@@ -107,14 +151,16 @@ export function createSidewalkScanner({ status, preview, button }) {
         layer.height = sidewalk.height;
         const layerContext = layer.getContext('2d');
         const image = layerContext.createImageData(layer.width, layer.height);
+        const color = painted ? [255, 203, 38, 140] : [0, 230, 145, 125];
         for (let i = 0; i < sidewalk.data.length; i++) {
-          if (sidewalk.data[i] > 0) image.data.set([0, 230, 145, 125], i * 4);
+          if (sidewalk.data[i] > 0) image.data.set(color, i * 4);
         }
         layerContext.putImageData(image, 0, 0);
         output.drawImage(layer, 0, 0, preview.width, preview.height);
       }
       preview.hidden = false;
-      const scene = sidewalk ? '已標示可見的人行道（綠色）。' : '此影格沒有足夠的人行道辨識證據。';
+      const scene = painted ? '已標示疑似藍綠色人行標線區（黃色），路面用途待確認。'
+        : sidewalk ? '已標示可見的人行道（綠色）。' : '此影格沒有足夠的人行道辨識證據。';
       const obstacles = possibleObstacles.length ? `疑似靠近人行道的物體：${possibleObstacles.join('、')}。` : '';
       const time = current.kind === 'video' ? `影片 ${frame.toFixed(1)} 秒。\n` : '';
       status.textContent = `掃描完成。${time}${scene}${obstacles} 通行淨寬待確認。`;

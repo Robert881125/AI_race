@@ -8,7 +8,7 @@
 </head>
 <body>
 <header class="top">
-  <div class="brand"><strong>無礙智瞳</strong><span class="ver">網頁原型 v0.2</span></div>
+  <div class="brand"><strong>無礙智瞳</strong><span class="ver">網頁原型 v0.2.1</span></div>
   <nav class="tabs" role="tablist" aria-label="功能">
     <button role="tab" id="tab-btn-camera" aria-controls="tab-camera" aria-selected="true">鏡頭判斷</button>
     <button role="tab" id="tab-btn-route" aria-controls="tab-route" aria-selected="false">路線提醒</button>
@@ -46,7 +46,7 @@
         <button type="button" id="scan-again" disabled>重新掃描</button>
       </div>
       <p id="scan-status" role="status">選擇照片、影片或開啟鏡頭後會自動掃描。</p>
-      <canvas id="scan-preview" aria-label="最近一次人行道掃描的影格，綠色表示模型辨識到的人行道" hidden></canvas>
+      <canvas id="scan-preview" aria-label="最近掃描的影格，綠色是辨識到的人行道，黃色是疑似人行標線" hidden></canvas>
     </section>
 
     <div class="stage-wrap">
@@ -172,6 +172,6 @@
 </footer>
 
 <video id="video" class="offscreen" playsinline muted></video>
-<script type="module" src="js/app.js?v=0.2"></script>
+<script type="module" src="js/app.js?v=painted-1"></script>
 </body>
 </html>

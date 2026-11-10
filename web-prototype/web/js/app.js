@@ -11,7 +11,7 @@ import * as voice from './voice.js';
 import * as detector from './detector.js';
 import { renderDemoScene, DEMO_SIZE } from './demo.js';
 import { initRoutePanel, initAdminPanel } from './panels.js';
-import { createSidewalkScanner } from './scan.js';
+import { createSidewalkScanner } from './scan.js?v=painted-1';
 
 const $ = (s) => document.querySelector(s);
 const view = $('#view');
